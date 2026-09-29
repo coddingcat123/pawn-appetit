@@ -297,6 +297,7 @@ function DeepReasons({ candidate }: { candidate: CandidateReportData }) {
 function MajorThreats({ candidate, fen }: { candidate: CandidateReportData; fen: string }) {
   const { t } = useTranslation();
   const setPreviewFen = useSetAtom(previewFenAtom);
+  const setPreviewShapes = useSetAtom(previewShapesAtom);
   if (candidate.threats.length === 0) return null;
 
   return (
@@ -312,10 +313,19 @@ function MajorThreats({ candidate, fen }: { candidate: CandidateReportData; fen:
           withBorder
           style={{ cursor: "pointer" }}
           onMouseEnter={() => {
+            // The compact threats list has no arrows/highlights of its own (see
+            // BranchReportDataCompact) -- unlike every other hover-preview in this
+            // panel, so the arrow here is built from the move's own from/to squares
+            // directly (yellow, matching board_viz.py's own COLOR_THREAT convention)
+            // rather than real computed tactics data.
             const preview = previewFromSan(fen, [candidate.move_san, threat.move_san]);
             setPreviewFen(preview?.fen ?? null);
+            setPreviewShapes(preview?.lastMove ? [{ ...preview.lastMove, brush: "yellow" }] : []);
           }}
-          onMouseLeave={() => setPreviewFen(null)}
+          onMouseLeave={() => {
+            setPreviewFen(null);
+            setPreviewShapes([]);
+          }}
         >
           <Group gap={6} wrap="nowrap" align="flex-start">
             <ThemeIcon size={18} radius="xl" color="red" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
