@@ -76,6 +76,10 @@ export function NagBadge({ nag }: { nag: number | null }) {
   );
 }
 
+/** Weighted-importance bars, not just badges with numbers -- each term's bar length is
+ * relative to the *strongest* term diff shown (not an absolute cp scale, which would
+ * make most bars look tiny), so at a glance the most important reason is visually the
+ * longest, matching the "weights the importance of these with a little bar" ask. */
 function TermBadges({
   diffs,
   glossary,
@@ -91,39 +95,47 @@ function TermBadges({
     .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
   if (all.length === 0) return null;
   const entries = expanded ? all : all.slice(0, 3);
+  const maxAbs = Math.max(...all.map(([, v]) => Math.abs(v)));
 
   return (
-    <Group gap="xs">
+    <Stack gap={4}>
       {entries.map(([name, value]) => {
         const term = glossary?.[name];
-        const badge = (
-          <Badge key={name} variant="light" color={value >= 0 ? "green" : "red"}>
-            {term?.display ?? name} ({value >= 0 ? "+" : ""}
-            {value.toFixed(2)})
-          </Badge>
+        const color = value >= 0 ? "green" : "red";
+        const row = (
+          <Group key={name} gap="xs" wrap="nowrap">
+            <Text size="xs" w={110} truncate>
+              {term?.display ?? name}
+            </Text>
+            <Progress value={maxAbs === 0 ? 0 : (Math.abs(value) / maxAbs) * 100} color={color} size="sm" flex={1} />
+            <Text size="xs" w={44} ta="right" c={color}>
+              {value >= 0 ? "+" : ""}
+              {value.toFixed(2)}
+            </Text>
+          </Group>
         );
         // A classical term has no per-square attribution data (unlike an NNUE feature,
         // whose click opens a real heatmap) -- a glossary tooltip is the honest
         // "explanation" a term badge can actually offer.
         return term ? (
           <Tooltip key={name} label={term.text} multiline w={240} withArrow>
-            {badge}
+            {row}
           </Tooltip>
         ) : (
-          badge
+          row
         );
       })}
       {all.length > 3 && (
-        <Badge
-          variant="outline"
-          color="gray"
+        <Text
+          size="xs"
+          c="dimmed"
           style={{ cursor: "pointer" }}
           onClick={() => setExpanded((v) => !v)}
         >
           {expanded ? t("features.board.analysis.explanation.showLess") : t("features.board.analysis.explanation.showMore", { count: all.length - 3 })}
-        </Badge>
+        </Text>
       )}
-    </Group>
+    </Stack>
   );
 }
 
