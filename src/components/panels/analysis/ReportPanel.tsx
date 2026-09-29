@@ -18,7 +18,7 @@ import { getGameStats, getMainLine, getPGN } from "@/utils/chess";
 import { updateGameRecord } from "@/utils/gameRecords";
 import { playedMoveCandidate, type TreeNode } from "@/utils/treeReducer";
 import { label } from "./AnalysisPanel.css";
-import Explanation, { formatCandidateScore, NagBadge } from "./Explanation";
+import Explanation, { ReviewBubble } from "./Explanation";
 import ReportModal from "./ReportModal";
 
 /** Chess.com's "Game Review" card, adapted: one line of "how good was the move that got
@@ -36,28 +36,7 @@ function VerdictCard({ node }: { node: TreeNode }) {
 
   const opponentColor = candidate.mover_is_white ? t("chess.black") : t("chess.white");
 
-  return (
-    <Paper withBorder p="xs">
-      <Group gap="xs" wrap="nowrap" mb={candidate.summary || candidate.reply_san ? 4 : 0}>
-        <Text fw="bold">{candidate.move_san}</Text>
-        <Text c="dimmed">{formatCandidateScore(candidate)}</Text>
-        <NagBadge nag={candidate.nag} />
-      </Group>
-      {candidate.summary && (
-        <Text size="sm" c="dimmed">
-          {candidate.summary}
-        </Text>
-      )}
-      {candidate.reply_san && (
-        <Text size="sm" c="orange">
-          {t("features.board.analysis.explanation.bewareOf", {
-            color: opponentColor,
-            move: candidate.reply_san,
-          })}
-        </Text>
-      )}
-    </Paper>
-  );
+  return <ReviewBubble candidate={candidate} bewareOfLabel={opponentColor} />;
 }
 
 /** A collapsible Paper section (accuracy chart, move-type counts) -- not persisted

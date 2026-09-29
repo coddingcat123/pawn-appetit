@@ -1,22 +1,49 @@
 import type { Key } from "@lichess-org/chessground/types";
-import { Alert, Badge, Button, Group, Progress, Stack, Text, TextInput, Tooltip } from "@mantine/core";
+import { Alert, Badge, Button, Group, Paper, Progress, Stack, Text, TextInput, ThemeIcon, Tooltip } from "@mantine/core";
+import {
+  IconAlertTriangle,
+  IconBolt,
+  IconBulb,
+  IconCheck,
+  IconExclamationCircle,
+  IconEyeExclamation,
+  IconInfoCircle,
+  IconThumbUp,
+  IconX,
+  type Icon,
+} from "@tabler/icons-react";
 import { makeSquare, makeUci } from "chessops";
 import { makeFen } from "chessops/fen";
 import { parseSan } from "chessops/san";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { useContext, useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { commands } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { chessRepertoirePathAtom, liveExplanationFamily, previewFenAtom, previewShapesAtom } from "@/state/atoms";
-import { ANNOTATION_INFO, NAG_INFO } from "@/utils/annotation";
+import { ANNOTATION_INFO, type Annotation, NAG_INFO } from "@/utils/annotation";
 import { positionFromFen } from "@/utils/chessops";
 import type { BoardArrow, BoardHighlight, CandidateReportData, InterpretabilityFeature, RichReport } from "@/utils/richReport";
 import { pgnColorToBrush } from "@/utils/richReport";
 import { unwrap } from "@/utils/unwrap";
 import FeatureModal from "./FeatureModal";
+
+/** chess.com's Game Review gives each reviewed move a colored icon avatar + quality
+ * label ("Excellent", "Best", "Mistake"...) -- the same vocabulary this app's own
+ * `ANNOTATION_INFO`/`NAG_INFO` already carries (color + translation key), just missing
+ * an icon. One flat icon per quality tier, not a cartoon avatar -- the modernized take
+ * on the same idea. */
+const QUALITY_ICON: Partial<Record<Annotation, Icon>> = {
+  "!!": IconBolt,
+  "!": IconThumbUp,
+  Best: IconCheck,
+  "!?": IconBulb,
+  "?!": IconAlertTriangle,
+  "?": IconExclamationCircle,
+  "??": IconX,
+};
 
 export function formatCandidateScore(candidate: { score_cp: number | null; score_mate: number | null }): string {
   if (candidate.score_mate !== null) {
@@ -38,6 +65,71 @@ export function NagBadge({ nag }: { nag: number | null }) {
     <Badge color={info.color} variant="filled">
       {glyph}
     </Badge>
+  );
+}
+
+/** chess.com's Game Review card, modernized: a colored icon avatar (quality tier, from
+ * NagBadge's own color/icon vocabulary) next to a tinted, rounded "speech bubble"
+ * holding the move, its quality label + score, and everything this app knows about
+ * why -- the verdict summary, "beware of" reply, and any deep reasons (desperado,
+ * threat-response, etc.) for `candidate` specifically. One shared component for every
+ * place a move's own review needs showing, so the played-move card (ReportPanel's
+ * VerdictCard) and the live best-move card (Explanation's CandidatePanel) always look
+ * and read identically. */
+export function ReviewBubble({
+  candidate,
+  bewareOfLabel,
+  children,
+}: {
+  candidate: CandidateReportData;
+  /** The opponent's display name (e.g. "Black") for the "beware of ... playing Qa4"
+   * line -- omit to suppress that line even when `reply_san` is present (the played-
+   * move card has this; a live best-move card mid-exploration may not need it). */
+  bewareOfLabel?: string;
+  /** Extra content (term bars, structural facts, threats list, ...) rendered inside
+   * the same bubble, below the standard verdict text. */
+  children?: ReactNode;
+}) {
+  const { t } = useTranslation();
+  const glyph = candidate.nag !== null ? NAG_INFO.get(`$${candidate.nag}`) : undefined;
+  const info = glyph ? ANNOTATION_INFO[glyph] : undefined;
+  const color = info?.color ?? "gray";
+  const Icon = (glyph && QUALITY_ICON[glyph]) || IconInfoCircle;
+  const label = info?.translationKey ? t(`chess.annotate.${info.translationKey}`) : null;
+
+  return (
+    <Group align="flex-start" gap="sm" wrap="nowrap">
+      <ThemeIcon size={38} radius="xl" color={color} variant="light" style={{ flexShrink: 0 }}>
+        <Icon size={20} />
+      </ThemeIcon>
+      <Paper radius="lg" p="sm" flex={1} style={{ backgroundColor: `var(--mantine-color-${color}-light)` }}>
+        <Group gap="xs" wrap="nowrap">
+          <Text fw={700}>{candidate.move_san}</Text>
+          <Text size="sm" c="dimmed">
+            {formatCandidateScore(candidate)}
+          </Text>
+          {label && (
+            <Badge color={color} variant="filled" size="sm">
+              {label}
+            </Badge>
+          )}
+        </Group>
+        {candidate.summary && (
+          <Text size="sm" c="dimmed" mt={4}>
+            {candidate.summary}
+          </Text>
+        )}
+        {candidate.reply_san && bewareOfLabel && (
+          <Group gap={4} mt={4} wrap="nowrap">
+            <IconEyeExclamation size={14} style={{ flexShrink: 0 }} />
+            <Text size="sm">
+              {t("features.board.analysis.explanation.bewareOf", { color: bewareOfLabel, move: candidate.reply_san })}
+            </Text>
+          </Group>
+        )}
+        {children}
+      </Paper>
+    </Group>
   );
 }
 
@@ -208,15 +300,16 @@ function MajorThreats({ candidate, fen }: { candidate: CandidateReportData; fen:
   if (candidate.threats.length === 0) return null;
 
   return (
-    <Stack gap={2}>
-      <Text size="xs" c="dimmed" fw="bold">
+    <Stack gap={4} mt={4}>
+      <Text size="xs" fw={700} tt="uppercase" c="dimmed">
         {t("features.board.analysis.explanation.majorThreats")}
       </Text>
       {candidate.threats.map((threat) => (
-        <Group
+        <Paper
           key={threat.move_uci}
-          gap="xs"
-          wrap="nowrap"
+          radius="sm"
+          p={6}
+          withBorder
           style={{ cursor: "pointer" }}
           onMouseEnter={() => {
             const preview = previewFromSan(fen, [candidate.move_san, threat.move_san]);
@@ -224,18 +317,27 @@ function MajorThreats({ candidate, fen }: { candidate: CandidateReportData; fen:
           }}
           onMouseLeave={() => setPreviewFen(null)}
         >
-          <Text size="sm" fw="bold">
-            {threat.move_san}
-          </Text>
-          <Text size="xs" c="dimmed">
-            {formatCandidateScore(threat)}
-          </Text>
-          {threat.structural_far.length > 0 && (
-            <Text size="xs" c="dimmed" truncate>
-              {threat.structural_far.join("; ")}
-            </Text>
-          )}
-        </Group>
+          <Group gap={6} wrap="nowrap" align="flex-start">
+            <ThemeIcon size={18} radius="xl" color="red" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
+              <IconEyeExclamation size={12} />
+            </ThemeIcon>
+            <div style={{ minWidth: 0 }}>
+              <Group gap="xs" wrap="nowrap">
+                <Text size="sm" fw={700}>
+                  {threat.move_san}
+                </Text>
+                <Text size="xs" c="dimmed">
+                  {formatCandidateScore(threat)}
+                </Text>
+              </Group>
+              {threat.structural_far.length > 0 && (
+                <Text size="xs" c="dimmed">
+                  {threat.structural_far.join("; ")}
+                </Text>
+              )}
+            </div>
+          </Group>
+        </Paper>
       ))}
     </Stack>
   );
@@ -249,37 +351,46 @@ function MajorThreats({ candidate, fen }: { candidate: CandidateReportData; fen:
 function BoardFacts({ richReport }: { richReport: RichReport }) {
   const { t } = useTranslation();
   const facts = [...(richReport.pay_attention ?? []), ...(richReport.positional_facts ?? [])];
-  const hasBiggestThreat = richReport.biggest_threat != null;
-  if (!hasBiggestThreat && !richReport.zugzwang && facts.length === 0) return null;
+  const warnings = [
+    richReport.biggest_threat &&
+      t("features.board.analysis.explanation.biggestThreat", {
+        move: richReport.biggest_threat.move_san,
+        score: formatCandidateScore(richReport.biggest_threat),
+      }),
+    richReport.zugzwang,
+  ].filter((w): w is string => Boolean(w));
+  if (warnings.length === 0 && facts.length === 0) return null;
 
   return (
-    <Stack gap={2}>
-      {richReport.biggest_threat && (
-        <Text size="sm" c="orange">
-          {t("features.board.analysis.explanation.biggestThreat", {
-            move: richReport.biggest_threat.move_san,
-            score: formatCandidateScore(richReport.biggest_threat),
-          })}
-        </Text>
-      )}
-      {richReport.zugzwang && (
-        <Text size="sm" c="orange">
-          {richReport.zugzwang}
-        </Text>
-      )}
-      {facts.length > 0 && (
-        <>
-          <Text size="xs" c="dimmed" fw="bold">
-            {t("features.board.analysis.explanation.boardFacts")}
-          </Text>
-          {facts.map((fact) => (
-            <Text key={fact} size="xs" c="dimmed">
-              {fact}
+    <Paper radius="md" p="xs" withBorder>
+      <Stack gap={6}>
+        {warnings.map((warning) => (
+          <Group key={warning} gap={6} wrap="nowrap" align="flex-start">
+            <ThemeIcon size={18} radius="xl" color="orange" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
+              <IconEyeExclamation size={12} />
+            </ThemeIcon>
+            <Text size="sm">{warning}</Text>
+          </Group>
+        ))}
+        {facts.length > 0 && (
+          <>
+            <Text size="xs" c="dimmed" fw="bold" tt="uppercase">
+              {t("features.board.analysis.explanation.boardFacts")}
             </Text>
-          ))}
-        </>
-      )}
-    </Stack>
+            {facts.map((fact) => (
+              <Group key={fact} gap={6} wrap="nowrap" align="flex-start">
+                <ThemeIcon size={18} radius="xl" color="gray" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
+                  <IconInfoCircle size={12} />
+                </ThemeIcon>
+                <Text size="xs" c="dimmed">
+                  {fact}
+                </Text>
+              </Group>
+            ))}
+          </>
+        )}
+      </Stack>
+    </Paper>
   );
 }
 
@@ -295,45 +406,48 @@ function CandidatePanel({
   onSelectFeature: (networkId: string, feature: InterpretabilityFeature) => void;
 }) {
   const { t } = useTranslation();
+  const opponentColor = candidate.mover_is_white ? t("chess.black") : t("chess.white");
 
   return (
-    <Stack gap="xs">
-      {candidate.pv_san.length > 1 && (
-        <Text size="xs" c="dimmed">
-          <Text span fw="bold" size="xs" c="dimmed">
-            {t("features.board.analysis.explanation.bestLine")}:{" "}
+    <ReviewBubble candidate={candidate} bewareOfLabel={opponentColor}>
+      <Stack gap="xs" mt={6}>
+        {candidate.pv_san.length > 1 && (
+          <Text size="xs" c="dimmed">
+            <Text span fw="bold" size="xs" c="dimmed">
+              {t("features.board.analysis.explanation.bestLine")}:{" "}
+            </Text>
+            {candidate.pv_san.join(" ")}
           </Text>
-          {candidate.pv_san.join(" ")}
-        </Text>
-      )}
-      {candidate.structural_far.length > 0 && (
-        <Text size="sm" c="dimmed">
-          {candidate.structural_far.join("; ")}
-        </Text>
-      )}
-      <DeepReasons candidate={candidate} />
-      <TermBadges diffs={candidate.term_diffs_far} glossary={glossary} />
-      {candidate.network_internals.map(
-        (net) =>
-          net.top_features.length > 0 && (
-            <Group key={net.network_id} gap="xs">
-              {net.top_features.map((feature) => (
-                <Badge
-                  key={feature.feature_id}
-                  variant="outline"
-                  size="xs"
-                  color={feature.concept_display ? "blue" : "gray"}
-                  style={{ cursor: "pointer" }}
-                  onClick={() => onSelectFeature(net.network_id, feature)}
-                >
-                  {feature.concept_display ?? t("features.board.analysis.explanation.unlabeled")}
-                </Badge>
-              ))}
-            </Group>
-          ),
-      )}
-      <MajorThreats candidate={candidate} fen={fen} />
-    </Stack>
+        )}
+        {candidate.structural_far.length > 0 && (
+          <Text size="sm" c="dimmed">
+            {candidate.structural_far.join("; ")}
+          </Text>
+        )}
+        <DeepReasons candidate={candidate} />
+        <TermBadges diffs={candidate.term_diffs_far} glossary={glossary} />
+        {candidate.network_internals.map(
+          (net) =>
+            net.top_features.length > 0 && (
+              <Group key={net.network_id} gap="xs">
+                {net.top_features.map((feature) => (
+                  <Badge
+                    key={feature.feature_id}
+                    variant="outline"
+                    size="xs"
+                    color={feature.concept_display ? "blue" : "gray"}
+                    style={{ cursor: "pointer" }}
+                    onClick={() => onSelectFeature(net.network_id, feature)}
+                  >
+                    {feature.concept_display ?? t("features.board.analysis.explanation.unlabeled")}
+                  </Badge>
+                ))}
+              </Group>
+            ),
+        )}
+        <MajorThreats candidate={candidate} fen={fen} />
+      </Stack>
+    </ReviewBubble>
   );
 }
 
