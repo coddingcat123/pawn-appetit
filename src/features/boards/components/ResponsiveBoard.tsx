@@ -90,7 +90,7 @@ function ResponsiveBoard({
 }: ResponsiveBoardProps) {
   const { t } = useTranslation();
   const { layout } = useResponsiveLayout();
-  const { ref: containerRef } = useElementSize();
+  const { ref: containerRef, width: containerWidth, height: containerHeight } = useElementSize();
   const [isInitializing, setIsInitializing] = useState(false);
   const [initializationError, setInitializationError] = useState<Error | null>(null);
 
@@ -109,17 +109,24 @@ function ResponsiveBoard({
     setIsInitializing(false);
   }, []);
 
-  // Board container styles - let the Board component handle its own sizing
+  // Board container styles -- constrained to a square that fits *within* the pane
+  // (min of measured width/height), not just "100%/100%" of it. The board itself sizes
+  // itself from width alone (aspect-ratio: 1 on a width: 100% box, in Chessground.tsx),
+  // so on a pane that's wider than it is tall (e.g. the default layout's board-over-
+  // moves column split), a plain 100%/100% box let the board grow taller than its own
+  // pane and overlap the moves list underneath it.
+  const boardSize =
+    containerWidth > 0 && containerHeight > 0 ? Math.min(containerWidth, containerHeight) : undefined;
   const boardContainerStyle = useMemo(
     () => ({
-      width: "100%",
-      height: "100%",
+      width: boardSize ?? "100%",
+      height: boardSize ?? "100%",
       display: "flex",
       flexDirection: "column" as const,
       touchAction: boardDimensions.isMobileLayout ? "manipulation" : "auto",
       userSelect: "none" as const,
     }),
-    [boardDimensions.isMobileLayout],
+    [boardDimensions.isMobileLayout, boardSize],
   );
 
   // Loading state
