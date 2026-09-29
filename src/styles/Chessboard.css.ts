@@ -20,6 +20,14 @@ globalStyle(`${chessboard} > .cg-wrap > cg-container > cg-board > square.last-mo
     },
 });
 
+// Explanation panel's "previewing a candidate/PV, not the real position" tint --
+// chessground's own square-highlight layer (same mechanism as last-move above) renders
+// behind pieces, unlike an overlay Box would, so the tinted squares stay visible
+// without dimming the pieces sitting on them.
+globalStyle(`${chessboard} > .cg-wrap > cg-container > cg-board > square.preview-tint`, {
+    backgroundColor: "color-mix(in srgb, var(--mantine-color-blue-5) 12%, transparent)",
+});
+
 export const blindfold = style({});
 globalStyle(`${blindfold} piece`, {
     opacity: 0,

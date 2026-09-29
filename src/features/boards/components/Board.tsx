@@ -1,5 +1,5 @@
 import type { DrawShape } from "@lichess-org/chessground/draw";
-import type { Piece } from "@lichess-org/chessground/types";
+import type { Key, Piece, SquareClasses } from "@lichess-org/chessground/types";
 import { Box, Group, Text } from "@mantine/core";
 import { useHotkeys } from "@mantine/hooks";
 import { notifications } from "@mantine/notifications";
@@ -37,6 +37,8 @@ import {
   eraseDrawablesOnClickAtom,
   forcedEnPassantAtom,
   moveInputAtom,
+  previewFenAtom,
+  previewShapesAtom,
   showArrowsAtom,
   showConsecutiveArrowsAtom,
   showCoordinatesAtom,
@@ -57,6 +59,16 @@ import PromotionModal from "./PromotionModal";
 const LARGE_BRUSH = 11;
 const MEDIUM_BRUSH = 7.5;
 const SMALL_BRUSH = 4;
+
+const ALL_SQUARES: Key[] = "abcdefgh"
+  .split("")
+  .flatMap((file) => "12345678".split("").map((rank) => `${file}${rank}` as Key));
+
+/** Every square mapped to chessground's "preview-tint" CSS class (see the board's own
+ * stylesheet) -- chessground's own square-highlight layer, which renders behind
+ * pieces (unlike a DOM overlay Box would, which would tint pieces too). Built once,
+ * not per-render, since it never varies. */
+const PREVIEW_TINT: SquareClasses = new Map(ALL_SQUARES.map((sq) => [sq, "preview-tint"]));
 
 export async function saveBoardSnapshot(boardRef: React.MutableRefObject<HTMLDivElement | null>) {
   const ref = boardRef.current;
@@ -185,8 +197,11 @@ function Board({
   const setFen = useStore(store, (s) => s.setFen);
   const { showContextMenu } = useContextMenu();
 
-  const [pos, error] = positionFromFen(currentNode.fen);
+  const previewFen = useAtomValue(previewFenAtom);
+  const displayFen = previewFen ?? currentNode.fen;
+  const [pos, error] = positionFromFen(displayFen);
 
+  const previewShapes = useAtomValue(previewShapesAtom);
   const moveInput = useAtomValue(moveInputAtom);
   const showDests = useAtomValue(showDestsAtom);
   const showArrows = useAtomValue(showArrowsAtom);
@@ -389,6 +404,13 @@ function Board({
     shapes = shapes.concat(currentNode.shapes);
   }
 
+  // A network-internals feature popup's attribution squares, or a candidate/depth-PV
+  // hover preview, shown while active -- never touches currentNode.shapes/the
+  // persisted store, just this render's shape list.
+  if (previewShapes.length > 0) {
+    shapes = shapes.concat(previewShapes);
+  }
+
   const hasClock =
     whiteTime !== undefined ||
     blackTime !== undefined ||
@@ -409,18 +431,23 @@ function Board({
   const practiceLock = !!practicing && !deck.positions.find((c) => c.fen === currentNode.fen);
 
   const movableColor: "white" | "black" | "both" | undefined = useMemo(() => {
-    return practiceLock
+    // A preview FEN is a phantom position, not the real tree node -- moving a piece on
+    // it wouldn't go anywhere sensible (there's no real position to apply it to), so
+    // movement is disabled for the duration of the preview.
+    return previewFen
       ? undefined
-      : editingMode
-        ? "both"
-        : match(movable)
-            .with("white", () => "white" as const)
-            .with("black", () => "black" as const)
-            .with("turn", () => turn)
-            .with("both", () => "both" as const)
-            .with("none", () => undefined)
-            .exhaustive();
-  }, [practiceLock, editingMode, movable, turn]);
+      : practiceLock
+        ? undefined
+        : editingMode
+          ? "both"
+          : match(movable)
+              .with("white", () => "white" as const)
+              .with("black", () => "black" as const)
+              .with("turn", () => turn)
+              .with("both", () => "both" as const)
+              .with("none", () => undefined)
+              .exhaustive();
+  }, [previewFen, practiceLock, editingMode, movable, turn]);
 
   const annotationColor = annotationColors[currentNode.annotations[0]] || "#6B7280";
   // Use the hex color directly for both light and dark variants
@@ -482,7 +509,7 @@ function Board({
     .otherwise((node) => node.move?.to);
 
   const lastMove =
-    currentNode.move && square !== undefined
+    !previewFen && currentNode.move && square !== undefined
       ? [chessgroundMove(currentNode.move)[0], makeSquare(square)!]
       : undefined;
 
@@ -625,7 +652,7 @@ function Board({
               setSelectedPiece={setSelectedPiece}
               setBoardFen={setBoardFen}
               orientation={orientation}
-              fen={currentNode.fen}
+              fen={displayFen}
               animation={{ enabled: !editingMode }}
               coordinates={showCoordinates !== "none"}
               coordinatesOnSquares={showCoordinates === "all"}
@@ -677,6 +704,7 @@ function Board({
               turnColor={turn}
               check={pos?.isCheck()}
               lastMove={editingMode ? undefined : lastMove}
+              highlight={previewFen ? { custom: PREVIEW_TINT } : undefined}
               premovable={{
                 enabled: false,
               }}
