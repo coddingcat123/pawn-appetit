@@ -7,6 +7,7 @@ import { useAtomValue } from "jotai";
 import React, { memo, Suspense, useContext, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
+import { useShallow } from "zustand/react/shallow";
 import EvalChart from "@/components/EvalChart";
 import ProgressButton from "@/components/ProgressButtonWithOutState";
 import { TreeStateContext } from "@/components/TreeStateContext";
@@ -15,8 +16,38 @@ import { saveAnalyzedGame } from "@/utils/analyzedGames";
 import { ANNOTATION_INFO, annotationColors, isBasicAnnotation } from "@/utils/annotation";
 import { getGameStats, getMainLine, getPGN } from "@/utils/chess";
 import { updateGameRecord } from "@/utils/gameRecords";
+import { playedMoveCandidate, type TreeNode } from "@/utils/treeReducer";
 import { label } from "./AnalysisPanel.css";
+import { formatCandidateScore, NagBadge } from "./Explanation";
 import ReportModal from "./ReportModal";
+
+/** Chess.com's "Game Review" card, adapted: one line of "how good was the move that got
+ * you here" (NAG + score) plus its verdict sentence, right above the accuracy chart --
+ * so browsing the report's move-by-move graph/annotation counts and reading *why* a
+ * move mattered live in one panel instead of two disconnected tabs. Only ever populated
+ * for a PGN-imported (`--rich` export) game -- see `playedMoveCandidate`'s own doc for
+ * why a live-generated explanation can't answer "how was the move that led here" the
+ * same way. Renders nothing for the root position (no move led there) or an
+ * unannotated one, rather than an always-visible empty card. */
+function VerdictCard({ node }: { node: TreeNode }) {
+  const candidate = playedMoveCandidate(node);
+  if (!candidate) return null;
+
+  return (
+    <Paper withBorder p="xs">
+      <Group gap="xs" wrap="nowrap" mb={candidate.summary ? 4 : 0}>
+        <Text fw="bold">{candidate.move_san}</Text>
+        <Text c="dimmed">{formatCandidateScore(candidate)}</Text>
+        <NagBadge nag={candidate.nag} />
+      </Group>
+      {candidate.summary && (
+        <Text size="sm" c="dimmed">
+          {candidate.summary}
+        </Text>
+      )}
+    </Paper>
+  );
+}
 
 function ReportPanel() {
   const { t } = useTranslation();
@@ -26,6 +57,7 @@ function ReportPanel() {
   const store = useContext(TreeStateContext)!;
   const root = useStore(store, (s) => s.root);
   const headers = useStore(store, (s) => s.headers);
+  const currentNode = useStore(store, useShallow((s) => s.currentNode()));
 
   const progress = useStore(store, (s) => s.report.progress);
   const isCompleted = useStore(store, (s) => s.report.isCompleted);
@@ -231,6 +263,7 @@ function ReportPanel() {
         />
       </Suspense>
       <Stack mb="lg" gap="0.4rem" mr="xs">
+        <VerdictCard node={currentNode} />
         <Group grow style={{ textAlign: "center" }}>
           {stats.whiteAccuracy && stats.blackAccuracy && (
             <>
