@@ -11,6 +11,7 @@
  *   uiAtoms.ts       — tab management, per-tab panel atoms, tabValue helper
  *   gameAtoms.ts     — database selection, puzzle/game/practice state
  *   engineAtoms.ts   — engine list, best-move families, enable/disable
+ *   explanationAtoms.ts — chess-repertoire Explanation panel (preview state + settings)
  */
 
 export * from "./boardAtoms";
@@ -18,3 +19,4 @@ export * from "./settingsAtoms";
 export * from "./uiAtoms";
 export * from "./gameAtoms";
 export * from "./engineAtoms";
+export * from "./explanationAtoms";
