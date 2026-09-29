@@ -597,6 +597,14 @@ async openExternalLink(url: string) : Promise<Result<null, string>> {
 },
 async getSoundServerPort() : Promise<number> {
     return await TAURI_INVOKE("get_sound_server_port");
+},
+async explainPosition(binaryPath: string, fen: string, options: ExplainOptions) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("explain_position", { binaryPath, fen, options }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -653,6 +661,18 @@ export type EngineOption = { name: string; value: string }
  */
 export type EngineOptions = { fen: string; moves: string[]; extraOptions: EngineOption[] }
 export type Event = { id: number; name: string | null }
+export type ExplainOptions = { multipv: number | null; depth: number | null; classicalEval: boolean | null; branchAlternatives: boolean | null; interpretability: boolean | null; depthSeries: boolean | null; 
+/**
+ * Guarantees this move gets explained even if it isn't one of the engine's own
+ * top-N MultiPV choices (e.g. the move actually continued with in the game).
+ */
+playedMoveUci: string | null; branchDepth: number | null; branchMultipv: number | null; 
+/**
+ * How many top-firing network-internals features to report per network --
+ * `report.py`'s own compact default (3) is tuned for a PGN comment, not an
+ * interactive panel with room to show more.
+ */
+featureTopK: number | null }
 export type FidePlayer = { fideid: number; name: string; country: string; sex: string; title: string | null; w_title: string | null; o_title: string | null; foa_title: string | null; rating: number | null; games: number | null; k: number | null; rapid_rating: number | null; rapid_games: number | null; rapid_k: number | null; blitz_rating: number | null; blitz_games: number | null; blitz_k: number | null; birthday: number | null; flag: string | null }
 export type FileMetadata = { last_modified: bigint; size: bigint; is_dir: boolean; is_readonly: boolean }
 export type GameOutcome = "Won" | "Drawn" | "Lost"
