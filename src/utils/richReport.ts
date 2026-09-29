@@ -39,8 +39,22 @@ export interface BoardHighlight {
 }
 
 /**
+ * A trimmed `BranchReportData` (`serialize_branch_data_compact` on the Python side) --
+ * one of the opponent's alternative replies to a candidate, i.e. one entry in the
+ * "major threats" list. Just move/score/why, not that branch's own near-term diffs --
+ * nothing this app renders needs those.
+ */
+export interface BranchReportDataCompact {
+    move_uci: string;
+    move_san: string;
+    score_cp: number | null;
+    score_mate: number | null;
+    structural_far: string[];
+}
+
+/**
  * Deliberately NOT the full shape `report.CandidateReportData` has on the Python side
- * (which also carries near-term data and opponent_branches) -- the export tag is
+ * (which also carries near-term data and full opponent_branches) -- the export tag is
  * trimmed to only what this fork actually renders (`serialize_candidate_data_compact`),
  * since `pgn_reader` (the Rust crate this app uses to parse imported PGN) has a hard
  * 16KB per-token buffer -- confirmed the hard way, a real export with the untrimmed
@@ -69,6 +83,37 @@ export interface CandidateReportData {
      * move of its own PV) -- e.g. for a "beware of Black playing Qa4" line alongside
      * the verdict summary. `null` if the PV doesn't go that deep. */
     reply_san: string | null;
+    /** The full principal variation in SAN -- "shows the best line" (chess.com's own
+     * Game Review does exactly this). `reply_san` above is just `pv_san[1]`. */
+    pv_san: string[];
+    /** "simple"/"discovered"/"double"/"cross" if this candidate gives check, else
+     * `null`. See `board_viz.check_kind`'s own docstring on the Python side for what
+     * each one means. */
+    check_kind: string | null;
+    /** A one-sentence "desperado" explanation if this candidate's move is one -- the
+     * piece playing it was already lost for free before it moved, so it grabs
+     * material on its way out -- else `null`. */
+    desperado: string | null;
+    /** A one-sentence "removed the defense" explanation if this candidate captures an
+     * opponent piece that was the sole defender of something else the mover was
+     * already attacking, else `null`. */
+    removed_defender: string | null;
+    /** A one-sentence perpetual-check note if this candidate's own PV is a real,
+     * repeating checking sequence, else `null`. */
+    perpetual_check: string | null;
+    /** A one-sentence windmill/see-saw note if this candidate's own PV contains 2+
+     * discovered checks by the mover, else `null`. */
+    windmill: string | null;
+    /** A one-sentence "how this candidate addresses the opponent's biggest threat"
+     * explanation -- the "Qa1 eliminates the threat of Qf6 because..." deep
+     * explanation from the original design -- else `null`. See `RichReport.biggest_threat`
+     * for what the threat itself was. */
+    threat_response: string | null;
+    /** The "major threats" list: the opponent's alternative replies to this candidate,
+     * each with its own score and reasons -- chess.com's Game Review shows the
+     * opponent's alternatives this way. Empty when `branch_alternatives` was off for
+     * this report, or the position after this candidate is already game-over. */
+    threats: BranchReportDataCompact[];
 }
 
 export interface DepthSeriesCandidate {
@@ -107,16 +152,47 @@ export interface RichReport {
      * here" and "the SAE model couldn't be found at all", which are very different
      * problems for a user to act on. */
     warnings?: string[];
-    /** The mover's own pins/forks/skewers against the opponent in the current position
-     * -- real, concrete geometric facts (python-chess's own is_pinned/attacks, plus
-     * manual ray-walking for skewers), not tied to any classical eval term. Only ever
-     * present on a live `explainPosition` result currently (not yet threaded through
-     * the `[%creport]` tag). */
+    /** The mover's own tactical motifs against the opponent in the current position --
+     * real, concrete geometric facts (python-chess's own is_pinned/attacks, plus manual
+     * ray-walking for skewers/x-rays/batteries/relative pins), not tied to any
+     * classical eval term. `trapped` has no arrows (a highlight-only fact: a mover
+     * piece under attack with nowhere safe to go). Only ever present on a live
+     * `explainPosition` result currently (not yet threaded through the `[%creport]`
+     * tag). */
     tactics?: {
         pins: { arrows: BoardArrow[]; highlights: BoardHighlight[] };
         forks: { arrows: BoardArrow[]; highlights: BoardHighlight[] };
         skewers: { arrows: BoardArrow[]; highlights: BoardHighlight[] };
+        // Optional, unlike pins/forks/skewers above -- added after those, so a cached
+        // live report or an older `[%creport]` tag generated before this schema change
+        // may genuinely lack them at runtime even though the TS type can't express
+        // "present from version X onward". Components reading these must check before
+        // indexing, the same way `tactics` itself is already optional.
+        xrays?: { arrows: BoardArrow[]; highlights: BoardHighlight[] };
+        batteries?: { arrows: BoardArrow[]; highlights: BoardHighlight[] };
+        relative_pins?: { arrows: BoardArrow[]; highlights: BoardHighlight[] };
+        trapped?: { arrows: BoardArrow[]; highlights: BoardHighlight[] };
+        overloaded?: { arrows: BoardArrow[]; highlights: BoardHighlight[] };
     };
+    /** Board-wide "pay attention to" facts -- undefended attacked pieces and their
+     * defenders -- color-neutral (not mover-vs-opponent like `tactics`). Only ever
+     * present on a live `explainPosition` result. */
+    pay_attention?: string[];
+    /** Plain positional facts from the target motif list: advanced pawns, doubled
+     * rooks on the 7th/2nd rank, weak back rank, king opposition. Only ever present on
+     * a live `explainPosition` result. */
+    positional_facts?: string[];
+    /** A one-sentence zugzwang note if the side to move is genuinely in zugzwang here
+     * (real null-move engine test, not a heuristic) -- `null` if not, absent if
+     * `--zugzwang` wasn't run (a PGN-imported report never has this). */
+    zugzwang?: string | null;
+    /** The opponent's single best move with a free tempo right now -- the concrete
+     * "beware of ... playing Qa4" threat, computed once per position (not the same as
+     * any one candidate's own `reply_san`, which is the opponent's best reply *after*
+     * that specific candidate). `null` when there's no significant threat. Each
+     * candidate's own `threat_response` explains what it does about this. Absent if
+     * `--threat-analysis` wasn't run (a PGN-imported report never has this). */
+    biggest_threat?: { move_san: string; score_cp: number | null; score_mate: number | null } | null;
 }
 
 const CREPORT_PATTERN = /\[%creport ([A-Za-z0-9+/=]+)\]/;

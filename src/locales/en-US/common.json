@@ -771,6 +771,11 @@
           "pins": "Pins",
           "forks": "Forks",
           "skewers": "Skewers",
+          "xrays": "X-rays",
+          "batteries": "Batteries",
+          "relativePins": "Relative pins",
+          "trapped": "Trapped pieces",
+          "overloaded": "Overloaded defenders",
           "options": "Explanation options",
           "optionsDefault": "default",
           "overPositions": "over {{count}} positions",
@@ -778,7 +783,12 @@
           "showLess": "Show less",
           "showMore": "+{{count}} more",
           "unlabeled": "Unlabeled",
-          "warningsTitle": "chess-repertoire reported an issue"
+          "warningsTitle": "chess-repertoire reported an issue",
+          "bestLine": "Best line",
+          "checkKind": "{{kind}} check",
+          "boardFacts": "Board facts",
+          "majorThreats": "Major threats",
+          "biggestThreat": "Biggest threat: {{move}} ({{score}})"
         }
       },
       "database": {

@@ -141,7 +141,14 @@ function TacticsBadges({ tactics }: { tactics: RichReport["tactics"] }) {
     { key: "pins", label: t("features.board.analysis.explanation.pins"), data: tactics.pins },
     { key: "forks", label: t("features.board.analysis.explanation.forks"), data: tactics.forks },
     { key: "skewers", label: t("features.board.analysis.explanation.skewers"), data: tactics.skewers },
-  ].filter((i) => i.data.highlights.length > 0);
+    { key: "xrays", label: t("features.board.analysis.explanation.xrays"), data: tactics.xrays },
+    { key: "batteries", label: t("features.board.analysis.explanation.batteries"), data: tactics.batteries },
+    { key: "relative_pins", label: t("features.board.analysis.explanation.relativePins"), data: tactics.relative_pins },
+    { key: "trapped", label: t("features.board.analysis.explanation.trapped"), data: tactics.trapped },
+    { key: "overloaded", label: t("features.board.analysis.explanation.overloaded"), data: tactics.overloaded },
+    // `data` is optional on every key beyond pins/forks/skewers -- an older cached
+    // report or `[%creport]` tag genuinely may not have them (see richReport.ts).
+  ].filter((i): i is typeof i & { data: NonNullable<typeof i.data> } => (i.data?.highlights.length ?? 0) > 0);
   if (items.length === 0) return null;
 
   return (
@@ -165,24 +172,146 @@ function TacticsBadges({ tactics }: { tactics: RichReport["tactics"] }) {
 /** The best move's own reasoning: verdict prose (rendered by the caller, via the
  * verdict card), structural facts, and weighted term-diff bars. NNUE feature badges
  * stay reachable (click opens the real heatmap in FeatureModal) but aren't the focus. */
+/** The deep, causal, per-move sentences -- desperado/removed-defender/perpetual-
+ * check/windmill/threat-response are already full sentences from the Python side
+ * (deliberately not fabricated here); check_kind is the one bare enum value needing a
+ * translated wrapper. Each is independently null most of the time -- only real,
+ * honestly-detected motifs ever render a line here. */
+function DeepReasons({ candidate }: { candidate: CandidateReportData }) {
+  const { t } = useTranslation();
+  const lines = [
+    candidate.check_kind && t("features.board.analysis.explanation.checkKind", { kind: candidate.check_kind }),
+    candidate.threat_response,
+    candidate.desperado,
+    candidate.removed_defender,
+    candidate.perpetual_check,
+    candidate.windmill,
+  ].filter((l): l is string => Boolean(l));
+  if (lines.length === 0) return null;
+  return (
+    <Stack gap={2}>
+      {lines.map((line) => (
+        <Text key={line} size="sm" c="teal">
+          {line}
+        </Text>
+      ))}
+    </Stack>
+  );
+}
+
+/** The "major threats" list -- the opponent's alternative replies to this candidate,
+ * each with its own score and reasons (chess.com's Game Review shows the opponent's
+ * alternatives this way). Hovering previews the reply on the board. */
+function MajorThreats({ candidate, fen }: { candidate: CandidateReportData; fen: string }) {
+  const { t } = useTranslation();
+  const setPreviewFen = useSetAtom(previewFenAtom);
+  if (candidate.threats.length === 0) return null;
+
+  return (
+    <Stack gap={2}>
+      <Text size="xs" c="dimmed" fw="bold">
+        {t("features.board.analysis.explanation.majorThreats")}
+      </Text>
+      {candidate.threats.map((threat) => (
+        <Group
+          key={threat.move_uci}
+          gap="xs"
+          wrap="nowrap"
+          style={{ cursor: "pointer" }}
+          onMouseEnter={() => {
+            const preview = previewFromSan(fen, [candidate.move_san, threat.move_san]);
+            setPreviewFen(preview?.fen ?? null);
+          }}
+          onMouseLeave={() => setPreviewFen(null)}
+        >
+          <Text size="sm" fw="bold">
+            {threat.move_san}
+          </Text>
+          <Text size="xs" c="dimmed">
+            {formatCandidateScore(threat)}
+          </Text>
+          {threat.structural_far.length > 0 && (
+            <Text size="xs" c="dimmed" truncate>
+              {threat.structural_far.join("; ")}
+            </Text>
+          )}
+        </Group>
+      ))}
+    </Stack>
+  );
+}
+
+/** Position-level facts -- not tied to any one candidate: the biggest threat right now
+ * (before any candidate is chosen), zugzwang, and plain board facts (pay-attention
+ * threats/defenders, advanced pawns, doubled 7th-rank rooks, weak back rank,
+ * opposition). Renders nothing when the live report simply didn't run these (an older
+ * `[%creport]` tag, or `--no-zugzwang`/`--no-threat-analysis`). */
+function BoardFacts({ richReport }: { richReport: RichReport }) {
+  const { t } = useTranslation();
+  const facts = [...(richReport.pay_attention ?? []), ...(richReport.positional_facts ?? [])];
+  const hasBiggestThreat = richReport.biggest_threat != null;
+  if (!hasBiggestThreat && !richReport.zugzwang && facts.length === 0) return null;
+
+  return (
+    <Stack gap={2}>
+      {richReport.biggest_threat && (
+        <Text size="sm" c="orange">
+          {t("features.board.analysis.explanation.biggestThreat", {
+            move: richReport.biggest_threat.move_san,
+            score: formatCandidateScore(richReport.biggest_threat),
+          })}
+        </Text>
+      )}
+      {richReport.zugzwang && (
+        <Text size="sm" c="orange">
+          {richReport.zugzwang}
+        </Text>
+      )}
+      {facts.length > 0 && (
+        <>
+          <Text size="xs" c="dimmed" fw="bold">
+            {t("features.board.analysis.explanation.boardFacts")}
+          </Text>
+          {facts.map((fact) => (
+            <Text key={fact} size="xs" c="dimmed">
+              {fact}
+            </Text>
+          ))}
+        </>
+      )}
+    </Stack>
+  );
+}
+
 function CandidatePanel({
   candidate,
   glossary,
+  fen,
   onSelectFeature,
 }: {
   candidate: CandidateReportData;
   glossary?: Record<string, { display: string; text: string }>;
+  fen: string;
   onSelectFeature: (networkId: string, feature: InterpretabilityFeature) => void;
 }) {
   const { t } = useTranslation();
 
   return (
     <Stack gap="xs">
+      {candidate.pv_san.length > 1 && (
+        <Text size="xs" c="dimmed">
+          <Text span fw="bold" size="xs" c="dimmed">
+            {t("features.board.analysis.explanation.bestLine")}:{" "}
+          </Text>
+          {candidate.pv_san.join(" ")}
+        </Text>
+      )}
       {candidate.structural_far.length > 0 && (
         <Text size="sm" c="dimmed">
           {candidate.structural_far.join("; ")}
         </Text>
       )}
+      <DeepReasons candidate={candidate} />
       <TermBadges diffs={candidate.term_diffs_far} glossary={glossary} />
       {candidate.network_internals.map(
         (net) =>
@@ -203,6 +332,7 @@ function CandidatePanel({
             </Group>
           ),
       )}
+      <MajorThreats candidate={candidate} fen={fen} />
     </Stack>
   );
 }
@@ -320,10 +450,12 @@ function Explanation() {
           {richReport.warnings.join(" ")}
         </Alert>
       )}
+      <BoardFacts richReport={richReport} />
       <TacticsBadges tactics={richReport.tactics} />
       <CandidatePanel
         candidate={top}
         glossary={richReport.term_glossary}
+        fen={currentNode.fen}
         onSelectFeature={(networkId, feature) => setSelected({ networkId, feature })}
       />
       {others.length > 0 && (
