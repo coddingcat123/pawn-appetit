@@ -1,6 +1,6 @@
-import { Grid, Group, Paper, ScrollArea, Stack, Text } from "@mantine/core";
-import { useToggle } from "@mantine/hooks";
-import { IconZoomCheck } from "@tabler/icons-react";
+import { ActionIcon, Collapse, Grid, Group, Paper, ScrollArea, Stack, Text } from "@mantine/core";
+import { useDisclosure, useToggle } from "@mantine/hooks";
+import { IconChevronDown, IconChevronRight, IconZoomCheck } from "@tabler/icons-react";
 import cx from "clsx";
 import equal from "fast-deep-equal";
 import { useAtomValue } from "jotai";
@@ -56,6 +56,52 @@ function VerdictCard({ node }: { node: TreeNode }) {
           })}
         </Text>
       )}
+    </Paper>
+  );
+}
+
+/** A collapsible Paper section (accuracy chart, move-type counts) -- not persisted
+ * across sessions, just per-view decluttering: the verdict card is the thing worth
+ * always seeing at a glance, these are supplementary and take real vertical space. */
+function CollapsibleSection({
+  title,
+  defaultOpened = true,
+  withPaper = true,
+  children,
+}: {
+  title: string;
+  defaultOpened?: boolean;
+  /** GameStats already renders its own bordered Paper -- set false there to avoid a
+   * Paper nested inside a Paper. */
+  withPaper?: boolean;
+  children: React.ReactNode;
+}) {
+  const [opened, { toggle }] = useDisclosure(defaultOpened);
+
+  const header = (
+    <Group justify="space-between" wrap="nowrap" onClick={toggle} style={{ cursor: "pointer" }}>
+      <Text size="sm" fw="bold" c="dimmed">
+        {title}
+      </Text>
+      <ActionIcon size="sm" variant="subtle">
+        {opened ? <IconChevronDown size="1rem" /> : <IconChevronRight size="1rem" />}
+      </ActionIcon>
+    </Group>
+  );
+
+  if (!withPaper) {
+    return (
+      <Stack gap="xs">
+        {header}
+        <Collapse expanded={opened}>{children}</Collapse>
+      </Stack>
+    );
+  }
+
+  return (
+    <Paper withBorder p={opened ? "md" : "xs"}>
+      <div style={{ marginBottom: opened ? "var(--mantine-spacing-xs)" : 0 }}>{header}</div>
+      <Collapse expanded={opened}>{children}</Collapse>
     </Paper>
   );
 }
@@ -308,10 +354,12 @@ function ReportPanel() {
             />
           </div>
         </Group>
-        <Paper withBorder p="md">
+        <CollapsibleSection title={t("features.board.analysis.accuracy")}>
           <EvalChart isAnalysing={inProgress} startAnalysis={toggleReportingMode} />
-        </Paper>
-        <GameStats {...stats} />
+        </CollapsibleSection>
+        <CollapsibleSection title={t("features.board.analysis.summary")} withPaper={false}>
+          <GameStats {...stats} />
+        </CollapsibleSection>
       </Stack>
     </ScrollArea>
   );
