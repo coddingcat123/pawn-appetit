@@ -704,7 +704,13 @@ function Board({
               turnColor={turn}
               check={pos?.isCheck()}
               lastMove={editingMode ? undefined : lastMove}
-              highlight={previewFen ? { custom: PREVIEW_TINT } : undefined}
+              // Always a full object, never `undefined` -- chessground's own config merge
+              // doesn't fall back to its defaults when a key is present but undefined,
+              // it just leaves state.highlight itself undefined, which crashes the next
+              // render ("s.highlight.custom" on an undefined s.highlight). lastMove/check
+              // reproduce chessground's own defaults (state.js), since this prop now
+              // fully owns "highlight" instead of leaving it unset.
+              highlight={{ lastMove: true, check: true, custom: previewFen ? PREVIEW_TINT : undefined }}
               premovable={{
                 enabled: false,
               }}
