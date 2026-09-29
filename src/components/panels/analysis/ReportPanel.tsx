@@ -18,7 +18,7 @@ import { getGameStats, getMainLine, getPGN } from "@/utils/chess";
 import { updateGameRecord } from "@/utils/gameRecords";
 import { playedMoveCandidate, type TreeNode } from "@/utils/treeReducer";
 import { label } from "./AnalysisPanel.css";
-import { formatCandidateScore, NagBadge } from "./Explanation";
+import Explanation, { formatCandidateScore, NagBadge } from "./Explanation";
 import ReportModal from "./ReportModal";
 
 /** Chess.com's "Game Review" card, adapted: one line of "how good was the move that got
@@ -321,6 +321,9 @@ function ReportPanel() {
       </Suspense>
       <Stack mb="lg" gap="0.4rem" mr="xs">
         <VerdictCard node={currentNode} />
+        <CollapsibleSection title={t("features.board.analysis.explanation.tabTitle")}>
+          <Explanation />
+        </CollapsibleSection>
         <Group grow style={{ textAlign: "center" }}>
           {stats.whiteAccuracy && stats.blackAccuracy && (
             <>

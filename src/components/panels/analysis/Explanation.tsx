@@ -554,7 +554,7 @@ function Explanation() {
   }
 
   return (
-    <Stack gap="sm" h="100%" p="xs">
+    <Stack gap="sm">
       <Group justify="space-between">
         <Group gap="xs">
           <ExplainOptionsModal />
