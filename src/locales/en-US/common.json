@@ -768,6 +768,8 @@
           "noFeaturesFired": "No strongly-firing features found here.",
           "noRichReport": "No deep-report data for this position. Import a PGN exported with 'chess-repertoire export --rich' to see verdicts and network internals here.",
           "multiPv": "Candidate lines (multipv)",
+          "pins": "Pins",
+          "forks": "Forks",
           "options": "Explanation options",
           "optionsDefault": "default",
           "overPositions": "over {{count}} positions",

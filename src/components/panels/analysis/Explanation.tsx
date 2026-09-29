@@ -41,6 +41,8 @@ import {
 import { ANNOTATION_INFO, NAG_INFO } from "@/utils/annotation";
 import { positionFromFen } from "@/utils/chessops";
 import type {
+  BoardArrow,
+  BoardHighlight,
   CandidateReportData,
   DepthSeriesEntry,
   InterpretabilityFeature,
@@ -152,19 +154,54 @@ function previewFromSan(
   return { fen: makeFen(pos.toSetup()), lastMove };
 }
 
-function candidateBoardShapes(candidate: CandidateReportData) {
+function boardShapesFor({ arrows, highlights }: { arrows: BoardArrow[]; highlights: BoardHighlight[] }) {
   return [
-    ...candidate.arrows.map((a) => ({
+    ...arrows.map((a) => ({
       orig: a.from_square as Key,
       dest: a.to_square as Key,
       brush: pgnColorToBrush(a.color),
     })),
-    ...candidate.highlights.map((h) => ({
+    ...highlights.map((h) => ({
       orig: h.square as Key,
       dest: h.square as Key,
       brush: pgnColorToBrush(h.color),
     })),
   ];
+}
+
+/** Position-level tactical motifs (pins, forks -- see board_viz.py's
+ * pin_annotations/fork_annotations) -- unlike a candidate's own arrows/highlights,
+ * these apply to the *current* position regardless of which candidate is expanded, so
+ * they render once, above the accordion, not per-candidate. Hovering previews the
+ * arrows/highlights on the board; nothing renders if there's nothing to show (no
+ * fabricated "0 pins" badge). */
+function TacticsBadges({ tactics }: { tactics: RichReport["tactics"] }) {
+  const { t } = useTranslation();
+  const setPreviewShapes = useSetAtom(previewShapesAtom);
+  if (!tactics) return null;
+
+  const items = [
+    { key: "pins", label: t("features.board.analysis.explanation.pins"), data: tactics.pins },
+    { key: "forks", label: t("features.board.analysis.explanation.forks"), data: tactics.forks },
+  ].filter((i) => i.data.highlights.length > 0);
+  if (items.length === 0) return null;
+
+  return (
+    <Group gap="xs">
+      {items.map((i) => (
+        <Badge
+          key={i.key}
+          variant="light"
+          color="grape"
+          style={{ cursor: "pointer" }}
+          onMouseEnter={() => setPreviewShapes(boardShapesFor(i.data))}
+          onMouseLeave={() => setPreviewShapes([])}
+        >
+          {i.label} ({i.data.highlights.length})
+        </Badge>
+      ))}
+    </Group>
+  );
 }
 
 function CandidatePanel({
@@ -577,13 +614,14 @@ function Explanation() {
           {richReport.warnings.join(" ")}
         </Alert>
       )}
+      <TacticsBadges tactics={richReport.tactics} />
       <Divider />
       <Accordion
         variant="separated"
         defaultValue={richReport.candidates[0]?.move_uci}
         onChange={(value) => {
           const candidate = richReport.candidates.find((c) => c.move_uci === value);
-          setPreviewShapes(candidate ? candidateBoardShapes(candidate) : []);
+          setPreviewShapes(candidate ? boardShapesFor(candidate) : []);
           // Expanding a candidate shows what its resulting position looks like -- via
           // previewFenAtom's tinted board override, NOT the real tree/makeMoves. Actually
           // navigating there turned out to be disruptive: it changed the real current

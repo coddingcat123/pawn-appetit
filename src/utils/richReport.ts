@@ -107,6 +107,14 @@ export interface RichReport {
      * here" and "the SAE model couldn't be found at all", which are very different
      * problems for a user to act on. */
     warnings?: string[];
+    /** The mover's own pins/forks against the opponent in the current position --
+     * real, concrete geometric facts (python-chess's own is_pinned/attacks), not tied
+     * to any classical eval term. Only ever present on a live `explainPosition` result
+     * currently (not yet threaded through the `[%creport]` tag). */
+    tactics?: {
+        pins: { arrows: BoardArrow[]; highlights: BoardHighlight[] };
+        forks: { arrows: BoardArrow[]; highlights: BoardHighlight[] };
+    };
 }
 
 const CREPORT_PATTERN = /\[%creport ([A-Za-z0-9+/=]+)\]/;
