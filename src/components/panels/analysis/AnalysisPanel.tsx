@@ -40,6 +40,7 @@ import { getPiecesCount, hasCaptures, positionFromFen } from "@/utils/chessops";
 import type { Engine } from "@/utils/engines";
 import BestMoves, { arrowColors } from "./BestMoves";
 import EngineSelection from "./EngineSelection";
+import Explanation from "./Explanation";
 import LogsPanel from "./LogsPanel";
 import ReportPanel from "./ReportPanel";
 import ScoreBubble from "./ScoreBubble";
@@ -117,6 +118,7 @@ function AnalysisPanel() {
       >
         <Tabs.List>
           <Tabs.Tab value="engines">{t("features.board.analysis.engines")}</Tabs.Tab>
+          <Tabs.Tab value="explanation">{t("features.board.analysis.explanation.tabTitle")}</Tabs.Tab>
           <Tabs.Tab value="report">{t("features.board.analysis.report")}</Tabs.Tab>
           <Tabs.Tab value="logs" disabled={loadedEngines.length === 0}>
             {t("features.board.analysis.logs")}
@@ -255,6 +257,17 @@ function AnalysisPanel() {
               </Group>
             </Stack>
           </ScrollArea>
+        </Tabs.Panel>
+        <Tabs.Panel
+          value="explanation"
+          pt="xs"
+          style={{
+            overflow: "auto",
+            display: tab === "explanation" ? "flex" : "none",
+            flexDirection: "column",
+          }}
+        >
+          <Explanation />
         </Tabs.Panel>
         <Tabs.Panel
           value="report"

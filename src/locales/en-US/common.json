@@ -747,6 +747,7 @@
         "accuracy": "Accuracy",
         "enableWDL": "You have to enable UCI_ShowWDL in the engine settings to use this feature.",
         "explanation": {
+          "tabTitle": "Explanation",
           "autoGenerate": "Auto-generate on navigation",
           "binaryPathLabel": "chess-repertoire binary path",
           "branchDepth": "Opponent-branch depth",
