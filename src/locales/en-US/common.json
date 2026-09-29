@@ -770,6 +770,7 @@
           "multiPv": "Candidate lines (multipv)",
           "pins": "Pins",
           "forks": "Forks",
+          "skewers": "Skewers",
           "options": "Explanation options",
           "optionsDefault": "default",
           "overPositions": "over {{count}} positions",

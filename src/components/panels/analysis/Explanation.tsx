@@ -195,6 +195,7 @@ function TacticsBadges({ tactics }: { tactics: RichReport["tactics"] }) {
   const items = [
     { key: "pins", label: t("features.board.analysis.explanation.pins"), data: tactics.pins },
     { key: "forks", label: t("features.board.analysis.explanation.forks"), data: tactics.forks },
+    { key: "skewers", label: t("features.board.analysis.explanation.skewers"), data: tactics.skewers },
   ].filter((i) => i.data.highlights.length > 0);
   if (items.length === 0) return null;
 
