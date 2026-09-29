@@ -1,9 +1,10 @@
 import type { DrawShape } from "@lichess-org/chessground/draw";
-import type { Move } from "chessops";
+import { makeUci, type Move } from "chessops";
 import { INITIAL_FEN } from "chessops/fen";
 import type { Outcome, Score } from "@/bindings";
 import type { Annotation } from "./annotation";
 import { positionFromFen } from "./chessops";
+import type { CandidateReportData, RichReport } from "./richReport";
 
 export interface TreeState {
     root: TreeNode;
@@ -25,6 +26,11 @@ export interface TreeNode {
     annotations: Annotation[];
     comment: string;
     clock?: number;
+    /** Parsed from a `[%creport <base64>]` PGN comment tag, if present (see
+     * `richReport.ts`) -- the full deep-report data from `chess-repertoire export --rich`
+     * (verdict terms, structural facts, network internals) for this position's
+     * candidates, undefined for a plain-PGN-imported game or an ordinary move. */
+    richReport?: RichReport;
 }
 
 export interface ReportState {
@@ -47,6 +53,58 @@ export function* treeIterator(node: TreeNode): Generator<ListNode> {
             stack.push({ position: [...position, i], node: node.children[i] });
         }
     }
+}
+
+export interface FeatureExample {
+    position: number[];
+    fen: string;
+    san: string | null;
+    activation: number;
+}
+
+/** Other positions in this same tree (any variation, not just the mainline) where the
+ * given network's feature also fired -- built purely client-side by walking whatever's
+ * already parsed from a `--rich` import (no extra query needed: every position's own
+ * `richReport` already carries its own network internals). Excludes `excludeFen` (the
+ * position the feature was clicked from) and only counts one example per position, even
+ * if several candidates there both surface the same feature id. */
+export function findFeatureExamples(
+    root: TreeNode,
+    networkId: string,
+    featureId: number,
+    excludeFen: string,
+    limit = 5,
+): FeatureExample[] {
+    const examples: FeatureExample[] = [];
+    for (const { position, node } of treeIterator(root)) {
+        if (node.fen === excludeFen || !node.richReport) continue;
+        for (const candidate of node.richReport.candidates) {
+            const net = candidate.network_internals.find((n) => n.network_id === networkId);
+            const feature = net?.top_features.find((f) => f.feature_id === featureId);
+            if (feature) {
+                examples.push({ position, fen: node.fen, san: node.san, activation: feature.activation });
+                break;
+            }
+        }
+    }
+    examples.sort((a, b) => Math.abs(b.activation) - Math.abs(a.activation));
+    return examples.slice(0, limit);
+}
+
+/** The played-move's own candidate entry from `node.richReport` -- i.e. "how good was
+ * the move that was actually played to reach this node", not "what could be played from
+ * here". Only meaningful for a PGN-imported (`--rich` export) node: `pgn_export.py`
+ * attaches each move's `[%creport]` tag to the position *after* that move, built from
+ * the *parent* position's full candidate list (see `_note_and_nag_for_move`), so
+ * `node.richReport.candidates` already includes the move that got you here alongside
+ * its alternatives -- this just finds which one that was. A live `explainPosition`
+ * result has the opposite direction (options *from* this position, not leading *to*
+ * it), so this deliberately returns null for a node whose richReport only came from
+ * `liveExplanationFamily`, rather than matching the wrong thing by accident. */
+export function playedMoveCandidate(node: TreeNode): CandidateReportData | null {
+    if (!node.richReport || !node.move) return null;
+    const uci = makeUci(node.move);
+    return node.richReport.candidates.find((c) => c.move_uci === uci) ?? null;
 }
 
 export function findFen(fen: string, node: TreeNode): number[] {
