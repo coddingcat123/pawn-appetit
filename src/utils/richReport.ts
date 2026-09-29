@@ -65,6 +65,10 @@ export interface CandidateReportData {
      * from -- rendered here directly instead of re-deriving anything from term_diffs_far/
      * structural_far, so report-imported and live-generated explanations read identically. */
     summary: string;
+    /** SAN of the opponent's expected reply if this candidate is played (the second
+     * move of its own PV) -- e.g. for a "beware of Black playing Qa4" line alongside
+     * the verdict summary. `null` if the PV doesn't go that deep. */
+    reply_san: string | null;
 }
 
 export interface DepthSeriesCandidate {

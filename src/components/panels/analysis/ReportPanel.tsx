@@ -30,12 +30,15 @@ import ReportModal from "./ReportModal";
  * same way. Renders nothing for the root position (no move led there) or an
  * unannotated one, rather than an always-visible empty card. */
 function VerdictCard({ node }: { node: TreeNode }) {
+  const { t } = useTranslation();
   const candidate = playedMoveCandidate(node);
   if (!candidate) return null;
 
+  const opponentColor = candidate.mover_is_white ? t("chess.black") : t("chess.white");
+
   return (
     <Paper withBorder p="xs">
-      <Group gap="xs" wrap="nowrap" mb={candidate.summary ? 4 : 0}>
+      <Group gap="xs" wrap="nowrap" mb={candidate.summary || candidate.reply_san ? 4 : 0}>
         <Text fw="bold">{candidate.move_san}</Text>
         <Text c="dimmed">{formatCandidateScore(candidate)}</Text>
         <NagBadge nag={candidate.nag} />
@@ -43,6 +46,14 @@ function VerdictCard({ node }: { node: TreeNode }) {
       {candidate.summary && (
         <Text size="sm" c="dimmed">
           {candidate.summary}
+        </Text>
+      )}
+      {candidate.reply_san && (
+        <Text size="sm" c="orange">
+          {t("features.board.analysis.explanation.bewareOf", {
+            color: opponentColor,
+            move: candidate.reply_san,
+          })}
         </Text>
       )}
     </Paper>

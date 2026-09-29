@@ -42,6 +42,7 @@ const SAMPLE: RichReport = {
             is_brilliant: false,
             nag: null,
             summary: "favors White primarily via Material (+0.30).",
+            reply_san: null,
         },
     ],
 };

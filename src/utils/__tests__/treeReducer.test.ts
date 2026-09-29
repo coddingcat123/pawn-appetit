@@ -49,6 +49,7 @@ function node(fen: string, children: TreeNode[] = [], featureId?: number, activa
                               is_brilliant: false,
                               nag: null,
                               summary: "",
+                              reply_san: null,
                           },
                       ],
                   },
