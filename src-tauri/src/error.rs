@@ -151,6 +151,9 @@ pub enum Error {
 
     #[error("Exact material count is below the pieces required by the query board")]
     InvalidMaterialCount,
+
+    #[error("chess-repertoire explain failed: {0}")]
+    ExplainFailed(String),
 }
 
 impl serde::Serialize for Error {

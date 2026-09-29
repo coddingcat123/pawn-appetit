@@ -7,6 +7,7 @@ mod app;
 mod chess;
 mod db;
 mod error;
+mod explain;
 mod fide;
 mod fs;
 mod lexer;
@@ -40,6 +41,7 @@ use crate::db::{
     delete_db_game, delete_empty_games, delete_indexes, delete_position_index, export_to_pgn,
     get_player, get_players_game_info, get_tournaments, search_position,
 };
+use crate::explain::explain_position;
 use crate::fide::{download_fide_db, find_fide_player};
 use crate::fs::{set_file_as_executable, DownloadProgress};
 use crate::lexer::lex_pgn;
@@ -171,7 +173,8 @@ pub async fn run() {
             check_package_installed,
             find_executable_path,
             open_external_link,
-            get_sound_server_port
+            get_sound_server_port,
+            explain_position
         ))
         .events(tauri_specta::collect_events!(
             BestMovesPayload,
