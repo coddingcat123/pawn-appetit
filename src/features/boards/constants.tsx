@@ -33,6 +33,9 @@ export const MOSAIC_PANE_CONSTRAINTS = {
 
 export const MOSAIC_RIGHT_COLUMN_SPLIT = 55;
 
+/** Board gets most of the left column's height; the move list underneath gets the rest. */
+export const MOSAIC_LEFT_COLUMN_SPLIT = 75;
+
 export const MAX_TABS = 10;
 
 export const DROPPABLE_IDS = {
@@ -52,13 +55,13 @@ export const DEFAULT_MOSAIC_LAYOUT: MosaicNode<ViewId> = {
   type: "split",
   direction: "row",
   children: [
-    MOSAIC_PORTAL_IDS.BOARD as ViewId,
     {
       type: "split",
       direction: "column",
-      children: [MOSAIC_PORTAL_IDS.ENGINE as ViewId, MOSAIC_PORTAL_IDS.MOVES as ViewId],
-      splitPercentages: [MOSAIC_RIGHT_COLUMN_SPLIT, 100 - MOSAIC_RIGHT_COLUMN_SPLIT],
+      children: [MOSAIC_PORTAL_IDS.BOARD as ViewId, MOSAIC_PORTAL_IDS.MOVES as ViewId],
+      splitPercentages: [MOSAIC_LEFT_COLUMN_SPLIT, 100 - MOSAIC_LEFT_COLUMN_SPLIT],
     },
+    MOSAIC_PORTAL_IDS.ENGINE as ViewId,
   ],
   splitPercentages: [50, 50],
 };
