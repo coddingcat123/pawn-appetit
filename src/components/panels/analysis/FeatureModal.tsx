@@ -1,11 +1,11 @@
 import type { Key } from "@lichess-org/chessground/types";
 import { Badge, Drawer, Group, ScrollArea, Stack, Table, Text } from "@mantine/core";
-import { useAtomValue, useSetAtom } from "jotai";
+import { useSetAtom } from "jotai";
 import { useContext, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import { debugNumbersAtom, previewShapesAtom } from "@/state/atoms";
+import { previewShapesAtom } from "@/state/atoms";
 import type { InterpretabilityFeature } from "@/utils/richReport";
 import { findFeatureExamples } from "@/utils/treeReducer";
 
@@ -37,7 +37,6 @@ function FeatureModal({
   const store = useContext(TreeStateContext)!;
   const root = useStore(store, (s) => s.root);
   const setPreviewShapes = useSetAtom(previewShapesAtom);
-  const debugNumbers = useAtomValue(debugNumbersAtom);
 
   useEffect(() => {
     if (!feature) {
@@ -80,12 +79,6 @@ function FeatureModal({
             ) : (
               <Badge color="gray">{t("features.board.analysis.explanation.unlabeled")}</Badge>
             )}
-            {debugNumbers && feature.correlation !== null && (
-              <Text size="sm" c="dimmed">
-                r={feature.correlation >= 0 ? "+" : ""}
-                {feature.correlation.toFixed(2)} {t("features.board.analysis.explanation.overPositions", { count: feature.correlation_n ?? 0 })}
-              </Text>
-            )}
           </Group>
 
           <Text size="sm">
@@ -96,7 +89,7 @@ function FeatureModal({
               <Group gap="xs">
                 {feature.attribution_squares.map(([square, score]) => (
                   <Badge key={square} variant="light" color={score >= 0 ? "green" : "red"}>
-                    {debugNumbers ? `${square} (${score >= 0 ? "+" : ""}${score.toFixed(2)})` : square}
+                    {square}
                   </Badge>
                 ))}
               </Group>
@@ -117,7 +110,6 @@ function FeatureModal({
                   {examples.map((example) => (
                     <Table.Tr key={example.fen}>
                       <Table.Td>{example.san ?? example.fen}</Table.Td>
-                      {debugNumbers && <Table.Td>{example.activation.toFixed(2)}</Table.Td>}
                     </Table.Tr>
                   ))}
                 </Table.Tbody>

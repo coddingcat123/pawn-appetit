@@ -1,8 +1,7 @@
 /**
  * Explanation panel (chess-repertoire integration) atoms.
  * Covers the live explainPosition cache, board preview overrides for candidate/PV
- * hovers, and persisted user preferences for that panel (binary path, auto-generate,
- * debug numbers, and explain-options like depth/multipv).
+ * hovers, and the chess-repertoire binary path setting.
  */
 import type { DrawShape } from "@lichess-org/chessground/draw";
 import { atom } from "jotai";
@@ -37,37 +36,3 @@ export const chessRepertoirePathAtom = atomWithStorage<string>("chess-repertoire
  * restarts), same as `previewShapesAtom`.
  */
 export const liveExplanationFamily = atomFamily((_fen: string) => atom<RichReport | null>(null));
-
-/** Whether navigating to a new position with no cached explanation should generate one
- * automatically, rather than requiring a manual click every time. Persisted -- a real
- * per-position latency preference, not ephemeral UI state. Default on: an easy toggle
- * exists for when that gets too slow navigating quickly through a line. */
-export const autoExplainAtom = atomWithStorage<boolean>("auto-explain", true);
-
-/** "a debug to show the numbers" -- when on, network-internals feature badges show
- * their raw activation/correlation numbers inline instead of only the concept label,
- * without needing to open the feature modal for every one of them. Persisted like
- * `autoExplainAtom`: a standing preference, not per-session UI state. */
-export const debugNumbersAtom = atomWithStorage<boolean>("explain-debug-numbers", false);
-
-/** User-adjustable knobs for `explainPosition` -- `null` for any field means "let
- * chess-repertoire use its own CLI default", not "explicitly zero"; the options dialog
- * only ever writes a field once the user actually touches its input, matching how the
- * Rust-side `ExplainOptions` (`push_flag`/plain Option<T>) already treats absence.
- * Named `ExplainSettings` (not `ExplainOptions`) to stay visually distinct from the
- * generated Rust-command type of that name in `@/bindings`. */
-export interface ExplainSettings {
-    multipv: number | null;
-    depth: number | null;
-    branchDepth: number | null;
-    branchMultipv: number | null;
-    featureTopK: number | null;
-}
-
-export const explainSettingsAtom = atomWithStorage<ExplainSettings>("explain-options", {
-    multipv: null,
-    depth: null,
-    branchDepth: null,
-    branchMultipv: null,
-    featureTopK: null,
-});
