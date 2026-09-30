@@ -11,8 +11,17 @@ import {
 } from "@mantine/core";
 import equal from "fast-deep-equal";
 import { useAtom } from "jotai";
-import { useCallback, useContext, useMemo } from "react";
+import { useCallback, useContext, useId, useMemo } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  Area,
+  AreaChart as RechartsAreaChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip as RechartsTooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import type { CategoricalChartFunc } from "recharts/types/chart/types";
 import { useStore } from "zustand";
 import { reportTypeAtom } from "@/state/atoms";
@@ -135,6 +144,34 @@ function EvalChart(props: EvalChartProps) {
 
   const data = [...getData()];
 
+  // chess.com's Game Review colors every move's own dot on the graph by that move's
+  // quality (gray for an ordinary/"Best" move, green/orange/red for the notable ones) --
+  // Mantine's <AreaChart dotProps> only accepts one static object applied to every
+  // point, so getting a per-point color means dropping to raw recharts here and
+  // supplying `dot` as a render function instead (splitId/gradient below replicate
+  // Mantine's own "split" fill so the line/fill still look identical to before).
+  const renderDot = useCallback(
+    (props: any) => {
+      const { cx, cy, index, payload } = props as {
+        cx?: number;
+        cy?: number;
+        index: number;
+        payload: DataPoint;
+      };
+      if (cx == null || cy == null || payload.yValue === "none") {
+        return <g key={`dot-${index}`} />;
+      }
+      const fill =
+        payload.color === "gray"
+          ? theme.colors.gray[5]
+          : theme.colors[payload.color][6];
+      return <circle key={`dot-${index}`} cx={cx} cy={cy} r={2.5} fill={fill} stroke="none" />;
+    },
+    [theme],
+  );
+
+  const splitId = useId().replace(/:/g, "");
+
   const onChartClick: CategoricalChartFunc = useCallback(
     (event: any) => {
       if (event.activeLabel) {
@@ -170,39 +207,37 @@ function EvalChart(props: EvalChartProps) {
           onChange={(v) => setChartType(v as "CP" | "WDL")}
         />
         {chartType === "CP" && (
-          <AreaChart
-            h={150}
-            curveType="monotone"
-            data={data}
-            dataKey={"name"}
-            series={[{ name: "yValue", color: theme.colors[theme.primaryColor][7] }]}
-            connectNulls={false}
-            withXAxis={false}
-            withYAxis={false}
-            yAxisProps={{ domain: [-1, 1] }}
-            type="split"
-            fillOpacity={1}
-            splitColors={["gray.1", "black"]}
-            splitOffset={colouroffset}
-            activeDotProps={{ r: 3, strokeWidth: 1 }}
-            dotProps={{ r: 0 }}
-            referenceLines={[
-              {
-                x: currentPositionName,
-                color: theme.colors[theme.primaryColor][7],
-              },
-            ]}
-            areaChartProps={{
-              onClick: onChartClick,
-              style: { cursor: "pointer" },
-            }}
-            gridAxis="none"
-            tooltipProps={{
-              content: ({ payload, active }) => (
-                <CustomTooltip active={active} payload={payload} type="cp" />
-              ),
-            }}
-          />
+          <ResponsiveContainer width="100%" height={150}>
+            <RechartsAreaChart data={data} onClick={onChartClick} style={{ cursor: "pointer" }}>
+              <defs>
+                <linearGradient id={splitId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset={colouroffset} stopColor={theme.colors.gray[1]} stopOpacity={1} />
+                  <stop offset={colouroffset} stopColor="black" stopOpacity={1} />
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="name" hide />
+              <YAxis domain={[-1, 1]} hide />
+              <ReferenceLine x={currentPositionName} stroke={theme.colors[theme.primaryColor][7]} />
+              <RechartsTooltip
+                content={({ payload, active }) => (
+                  <CustomTooltip active={active} payload={payload} type="cp" />
+                )}
+                animationDuration={0}
+              />
+              <Area
+                type="monotone"
+                dataKey="yValue"
+                stroke={theme.colors[theme.primaryColor][7]}
+                strokeWidth={2}
+                fill={`url(#${splitId})`}
+                fillOpacity={1}
+                connectNulls={false}
+                isAnimationActive={false}
+                dot={renderDot}
+                activeDot={{ r: 3, strokeWidth: 1 }}
+              />
+            </RechartsAreaChart>
+          </ResponsiveContainer>
         )}
         {chartType === "WDL" &&
           (isWDLDisabled ? (

@@ -1,6 +1,6 @@
-import { ActionIcon, Collapse, Grid, Group, Paper, ScrollArea, Stack, Text } from "@mantine/core";
-import { useDisclosure, useToggle } from "@mantine/hooks";
-import { IconChevronDown, IconChevronRight, IconZoomCheck } from "@tabler/icons-react";
+import { Grid, Group, Paper, Progress, ScrollArea, Stack, Text } from "@mantine/core";
+import { useToggle } from "@mantine/hooks";
+import { IconZoomCheck } from "@tabler/icons-react";
 import cx from "clsx";
 import equal from "fast-deep-equal";
 import { useAtomValue } from "jotai";
@@ -11,77 +11,59 @@ import { useShallow } from "zustand/react/shallow";
 import EvalChart from "@/components/EvalChart";
 import ProgressButton from "@/components/ProgressButtonWithOutState";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import { activeTabAtom } from "@/state/atoms";
+import { activeTabAtom, liveExplanationFamily } from "@/state/atoms";
 import { saveAnalyzedGame } from "@/utils/analyzedGames";
 import { ANNOTATION_INFO, annotationColors, isBasicAnnotation } from "@/utils/annotation";
 import { getGameStats, getMainLine, getPGN } from "@/utils/chess";
 import { updateGameRecord } from "@/utils/gameRecords";
-import { playedMoveCandidate, type TreeNode } from "@/utils/treeReducer";
+import { findPlayedCandidate, getNodeAtPath, playedMoveCandidate, type TreeNode } from "@/utils/treeReducer";
 import { label } from "./AnalysisPanel.css";
+import { CollapsibleSection } from "./CollapsibleSection";
 import Explanation, { ReviewBubble } from "./Explanation";
 import ReportModal from "./ReportModal";
 
-/** Chess.com's "Game Review" card, adapted: one line of "how good was the move that got
- * you here" (NAG + score) plus its verdict sentence, right above the accuracy chart --
- * so browsing the report's move-by-move graph/annotation counts and reading *why* a
- * move mattered live in one panel instead of two disconnected tabs. Only ever populated
- * for a PGN-imported (`--rich` export) game -- see `playedMoveCandidate`'s own doc for
- * why a live-generated explanation can't answer "how was the move that led here" the
- * same way. Renders nothing for the root position (no move led there) or an
- * unannotated one, rather than an always-visible empty card. */
-function VerdictCard({ node }: { node: TreeNode }) {
+/** Chess.com's "Game Review" card: one line of "how good was the move that got you
+ * here" (NAG + score) plus its verdict sentence, right above the accuracy chart -- so
+ * browsing the report's move-by-move graph/annotation counts and reading *why* a move
+ * mattered live in one panel instead of two disconnected tabs.
+ *
+ * Two data sources, in priority order: `node.richReport` (a PGN-imported `--rich`
+ * game, or a "generate for whole game" batch run -- see `setRichReportAtPath`) if
+ * present, else `liveExplanationFamily(parentFen)` (the per-move "Generate" button's
+ * own output -- it writes there, keyed by the *parent* position's fen, specifically
+ * because `playedMoveUci` was passed so the played move is guaranteed to be one of the
+ * candidates -- see `GenerateExplanationPrompt`). Without this fallback, the on-demand
+ * flow (the normal, everyday way someone actually generates an explanation) would never
+ * populate this card at all -- it only ever writes into the live atom, never into
+ * `node.richReport`. Renders nothing for the root position (no move led there) or a
+ * position with neither source available, rather than an always-visible empty card. */
+function VerdictCard({ node, parentFen }: { node: TreeNode; parentFen: string | null }) {
   const { t } = useTranslation();
-  const candidate = playedMoveCandidate(node);
+  const liveParentReport = useAtomValue(liveExplanationFamily(parentFen ?? ""));
+  const candidate = playedMoveCandidate(node) ?? findPlayedCandidate(liveParentReport, node.move);
   if (!candidate) return null;
 
   const opponentColor = candidate.mover_is_white ? t("chess.black") : t("chess.white");
-
-  return <ReviewBubble candidate={candidate} bewareOfLabel={opponentColor} />;
-}
-
-/** A collapsible Paper section (accuracy chart, move-type counts) -- not persisted
- * across sessions, just per-view decluttering: the verdict card is the thing worth
- * always seeing at a glance, these are supplementary and take real vertical space. */
-function CollapsibleSection({
-  title,
-  defaultOpened = true,
-  withPaper = true,
-  children,
-}: {
-  title: string;
-  defaultOpened?: boolean;
-  /** GameStats already renders its own bordered Paper -- set false there to avoid a
-   * Paper nested inside a Paper. */
-  withPaper?: boolean;
-  children: React.ReactNode;
-}) {
-  const [opened, { toggle }] = useDisclosure(defaultOpened);
-
-  const header = (
-    <Group justify="space-between" wrap="nowrap" onClick={toggle} style={{ cursor: "pointer" }}>
-      <Text size="sm" fw="bold" c="dimmed">
-        {title}
-      </Text>
-      <ActionIcon size="sm" variant="subtle">
-        {opened ? <IconChevronDown size="1rem" /> : <IconChevronRight size="1rem" />}
-      </ActionIcon>
-    </Group>
-  );
-
-  if (!withPaper) {
-    return (
-      <Stack gap="xs">
-        {header}
-        <Collapse expanded={opened}>{children}</Collapse>
-      </Stack>
-    );
-  }
+  // The played move wasn't the engine's top choice -- show what should have been
+  // played instead ("The best play after e4: ...", chess.com's own "blunder" callout
+  // style), not just a bare quality badge with no contrast to explain it. Same
+  // priority-ordered source as `candidate` itself, so both always agree with each
+  // other about which report they're reading from.
+  const report = node.richReport ?? liveParentReport;
+  const best = report?.candidates[0];
+  const showBestPlay = best && best.move_uci !== candidate.move_uci && best.pv_san.length > 0;
 
   return (
-    <Paper withBorder p={opened ? "md" : "xs"}>
-      <div style={{ marginBottom: opened ? "var(--mantine-spacing-xs)" : 0 }}>{header}</div>
-      <Collapse expanded={opened}>{children}</Collapse>
-    </Paper>
+    <ReviewBubble candidate={candidate} bewareOfLabel={opponentColor}>
+      {showBestPlay && (
+        <Text size="sm" mt={4}>
+          {t("features.board.analysis.explanation.bestPlayAfter", "The best play after {{move}}:", {
+            move: candidate.move_san,
+          })}{" "}
+          {best.pv_san.join(" ")}
+        </Text>
+      )}
+    </ReviewBubble>
   );
 }
 
@@ -94,11 +76,14 @@ function ReportPanel() {
   const root = useStore(store, (s) => s.root);
   const headers = useStore(store, (s) => s.headers);
   const currentNode = useStore(store, useShallow((s) => s.currentNode()));
+  const position = useStore(store, (s) => s.position);
+  const parentFen = position.length > 0 ? getNodeAtPath(root, position.slice(0, -1)).fen : null;
 
   const progress = useStore(store, (s) => s.report.progress);
   const isCompleted = useStore(store, (s) => s.report.isCompleted);
   const inProgress = useStore(store, (s) => s.report.inProgress);
   const setInProgress = useStore(store, (s) => s.setReportInProgress);
+  const explainProgress = useStore(store, (s) => s.report.explainProgress);
 
   const [reportingMode, toggleReportingMode] = useToggle();
 
@@ -299,10 +284,8 @@ function ReportPanel() {
         />
       </Suspense>
       <Stack mb="lg" gap="0.4rem" mr="xs">
-        <VerdictCard node={currentNode} />
-        <CollapsibleSection title={t("features.board.analysis.explanation.tabTitle")}>
-          <Explanation />
-        </CollapsibleSection>
+        <VerdictCard node={currentNode} parentFen={parentFen} />
+        <Explanation />
         <Group grow style={{ textAlign: "center" }}>
           {stats.whiteAccuracy && stats.blackAccuracy && (
             <>
@@ -336,6 +319,19 @@ function ReportPanel() {
             />
           </div>
         </Group>
+        {explainProgress && (
+          <Stack gap={2}>
+            <Text size="xs" c="dimmed">
+              {t("features.board.analysis.explanation.generateForWholeGame")}: {explainProgress.done}/
+              {explainProgress.total}
+            </Text>
+            <Progress
+              value={(explainProgress.done / explainProgress.total) * 100}
+              size="sm"
+              animated
+            />
+          </Stack>
+        )}
         <CollapsibleSection title={t("features.board.analysis.accuracy")}>
           <EvalChart isAnalysing={inProgress} startAnalysis={toggleReportingMode} />
         </CollapsibleSection>

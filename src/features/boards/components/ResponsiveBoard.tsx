@@ -115,8 +115,20 @@ function ResponsiveBoard({
   // so on a pane that's wider than it is tall (e.g. the default layout's board-over-
   // moves column split), a plain 100%/100% box let the board grow taller than its own
   // pane and overlap the moves list underneath it.
+  //
+  // Board.tsx stacks its own chrome *above* that square (the captured-material row,
+  // conditionally rendered) inside a box whose height was pinned to exactly this same
+  // boardSize with `overflow: hidden` -- in a pane where height is the binding
+  // dimension (boardSize === containerHeight, i.e. there's zero natural slack), that
+  // chrome row had nowhere to go and got clipped off the bottom, taking the board-
+  // controls row right below it with it -- right where the moves pane starts, reading
+  // as "the moves list is hiding the board's own buttons". Reserving a fixed margin for
+  // that chrome keeps the square small enough to always leave it room.
+  const BOARD_CHROME_RESERVE_PX = 40;
   const boardSize =
-    containerWidth > 0 && containerHeight > 0 ? Math.min(containerWidth, containerHeight) : undefined;
+    containerWidth > 0 && containerHeight > 0
+      ? Math.max(0, Math.min(containerWidth, containerHeight - BOARD_CHROME_RESERVE_PX))
+      : undefined;
   const boardContainerStyle = useMemo(
     () => ({
       width: boardSize ?? "100%",

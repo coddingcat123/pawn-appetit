@@ -10,6 +10,7 @@ import { ANNOTATION_INFO, type Annotation } from "@/utils/annotation";
 import { getPGN } from "@/utils/chess";
 import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
 import { isPrefix } from "@/utils/misc";
+import type { RichReport } from "@/utils/richReport";
 import { getAnnotation } from "@/utils/score";
 import { playSound } from "@/utils/sound";
 import { compressedSessionStorage } from "@/utils/tabStateStorage";
@@ -65,6 +66,14 @@ export interface TreeStoreState extends TreeState {
     setShapes: (shapes: DrawShape[]) => void;
     setScore: (score: Score) => void;
 
+    /** Attaches a chess-repertoire deep report to the node at `path`, keyed the same
+     * way a PGN-imported `[%creport]` tag is: candidates computed from the position
+     * *before* that node's move, so `playedMoveCandidate`/the verdict card can grade
+     * the move that led there. Used by the "generate explanations for whole game"
+     * batch flow (ReportModal) to populate every move's own `node.richReport`, the
+     * same field a `--rich` PGN import would have set. */
+    setRichReportAtPath: (path: number[], richReport: RichReport) => void;
+
     clearShapes: () => void;
 
     setFen: (fen: string) => void;
@@ -80,6 +89,7 @@ export interface TreeStoreState extends TreeState {
     setReportProgress: (progress: number) => void;
     setReportCompleted: (isCompleted: boolean) => void;
     setReportInProgress: (value: boolean) => void;
+    setExplainProgress: (progress: { done: number; total: number } | null) => void;
 
     setState: (state: TreeState) => void;
     reset: () => void;
@@ -467,6 +477,15 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
                     }
                 }),
             ),
+        setRichReportAtPath: (path, richReport) =>
+            set(
+                produce((state) => {
+                    const node = getNodeAtPath(state.root, path);
+                    if (node) {
+                        node.richReport = richReport;
+                    }
+                }),
+            ),
         addAnalysis: (analysis) =>
             set(
                 produce((state) => {
@@ -492,6 +511,13 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
             set(
                 produce((state: Draft<TreeStoreState>) => {
                     state.report.inProgress = value;
+                }),
+            );
+        },
+        setExplainProgress: (value) => {
+            set(
+                produce((state: Draft<TreeStoreState>) => {
+                    state.report.explainProgress = value;
                 }),
             );
         },

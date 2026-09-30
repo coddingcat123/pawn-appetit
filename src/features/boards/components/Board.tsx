@@ -547,9 +547,9 @@ function Board({
           </Group>
         )}
         <Group
+          wrap="nowrap"
           style={{
             position: "relative",
-            flexWrap: "nowrap",
           }}
           gap="sm"
         >

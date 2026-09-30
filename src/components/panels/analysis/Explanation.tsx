@@ -1,5 +1,20 @@
+import type { DrawShape } from "@lichess-org/chessground/draw";
 import type { Key } from "@lichess-org/chessground/types";
-import { Alert, Badge, Button, Group, Paper, Progress, Stack, Text, TextInput, ThemeIcon, Tooltip } from "@mantine/core";
+import {
+  Alert,
+  Badge,
+  Button,
+  Checkbox,
+  Group,
+  Paper,
+  Popover,
+  Progress,
+  Stack,
+  Text,
+  TextInput,
+  ThemeIcon,
+  Tooltip,
+} from "@mantine/core";
 import {
   IconAlertTriangle,
   IconBolt,
@@ -8,6 +23,7 @@ import {
   IconExclamationCircle,
   IconEyeExclamation,
   IconInfoCircle,
+  IconSettings,
   IconThumbUp,
   IconX,
   type Icon,
@@ -16,18 +32,35 @@ import { makeSquare, makeUci } from "chessops";
 import { makeFen } from "chessops/fen";
 import { parseSan } from "chessops/san";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { commands } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import { chessRepertoirePathAtom, liveExplanationFamily, previewFenAtom, previewShapesAtom } from "@/state/atoms";
+import {
+  chessRepertoirePathAtom,
+  explainGenerationSettingsAtom,
+  explanationDisplaySettingsAtom,
+  liveExplanationFamily,
+  previewFenAtom,
+  previewShapesAtom,
+} from "@/state/atoms";
 import { ANNOTATION_INFO, type Annotation, NAG_INFO } from "@/utils/annotation";
 import { positionFromFen } from "@/utils/chessops";
-import type { BoardArrow, BoardHighlight, CandidateReportData, InterpretabilityFeature, RichReport } from "@/utils/richReport";
+import type {
+  BestMoveNarrative,
+  BoardArrow,
+  BoardHighlight,
+  CandidateReportData,
+  DepthSeriesEntry,
+  InterpretabilityFeature,
+  NewFact,
+  RichReport,
+} from "@/utils/richReport";
 import { pgnColorToBrush } from "@/utils/richReport";
 import { unwrap } from "@/utils/unwrap";
+import { CollapsibleSection } from "./CollapsibleSection";
 import FeatureModal from "./FeatureModal";
 
 /** chess.com's Game Review gives each reviewed move a colored icon avatar + quality
@@ -111,6 +144,11 @@ export function ReviewBubble({
           {label && (
             <Badge color={color} variant="filled" size="sm">
               {label}
+            </Badge>
+          )}
+          {candidate.is_sacrifice && (
+            <Badge color="grape" variant="light" size="sm">
+              {t("features.board.analysis.explanation.sacrifice", "Sacrifice")}
             </Badge>
           )}
         </Group>
@@ -213,18 +251,178 @@ function previewFromSan(fen: string, sanMoves: string[]): { fen: string; lastMov
   return { fen: makeFen(pos.toSetup()), lastMove };
 }
 
-function boardShapesFor({ arrows, highlights }: { arrows: BoardArrow[]; highlights: BoardHighlight[] }) {
+function boardShapesFor({ arrows, highlights }: { arrows: BoardArrow[]; highlights: BoardHighlight[] }): DrawShape[] {
   return [
     ...arrows.map((a) => ({ orig: a.from_square as Key, dest: a.to_square as Key, brush: pgnColorToBrush(a.color) })),
     ...highlights.map((h) => ({ orig: h.square as Key, dest: h.square as Key, brush: pgnColorToBrush(h.color) })),
   ];
 }
 
+/** Wraps a glyph (drawn in its own local coordinates, roughly centered on the
+ * (50,50) midpoint of a 0-100 box) in a translucent colored circle badge, sized to sit
+ * in the corner of a square without hiding the piece under it. This is what actually
+ * renders per-tactic-type via chessground's `customSvg` shape field -- a REAL pictogram,
+ * not text: chessground's `label` shape only ever draws short text (see `svg.ts`), which
+ * is exactly what was rejected (pins/forks/etc. all need their own distinct glyph, not a
+ * 3-4 letter abbreviation). `customSvg` renders a fixed 1x1-board-unit box with an
+ * internal `viewBox="0 0 100 100"`, centered at a single point (`orig`/`dest`/`label`) --
+ * confirmed by reading chessground's own `svg.ts` -- so every glyph below is authored in
+ * that same 100x100 space, offset toward the top-right corner (cx=72,cy=28) so it reads
+ * as a corner badge rather than covering the whole square. */
+function badgeIcon(color: string, glyph: string): string {
+  return `<circle cx="72" cy="28" r="20" fill="${color}" opacity="0.92" stroke="#1a1a1a" stroke-width="2"/>${glyph}`;
+}
+
+/** Real per-tactic-type pictograms (not text labels -- see `badgeIcon`'s docstring),
+ * one simple, distinguishable glyph per motif, plus the same `board_viz.py`-echoing
+ * color used before. All glyph coordinates are local to the (72,28) badge center. */
+const TACTIC_ICONS: Record<string, { html: string; color: string }> = {
+  // Pin: a ring (the pinned piece) threaded by a straight needle.
+  pins: {
+    color: "#3b82f6",
+    html: badgeIcon(
+      "#3b82f6",
+      '<circle cx="72" cy="28" r="7" fill="none" stroke="#fff" stroke-width="3"/><line x1="72" y1="9" x2="72" y2="19" stroke="#fff" stroke-width="3" stroke-linecap="round"/><line x1="72" y1="37" x2="72" y2="47" stroke="#fff" stroke-width="3" stroke-linecap="round"/>',
+    ),
+  },
+  // Fork: a trident/Y -- one piece attacking two others at once.
+  forks: {
+    color: "#ef4444",
+    html: badgeIcon(
+      "#ef4444",
+      '<path d="M62,17 L72,29 L82,17 M72,29 L72,42" stroke="#fff" stroke-width="3.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+    ),
+  },
+  // Skewer: a straight rod through a near piece and a far piece behind it.
+  skewers: {
+    color: "#22c55e",
+    html: badgeIcon(
+      "#22c55e",
+      '<line x1="55" y1="28" x2="89" y2="28" stroke="#fff" stroke-width="3"/><circle cx="65" cy="28" r="5" fill="#fff"/><circle cx="80" cy="28" r="5" fill="none" stroke="#fff" stroke-width="2.5"/>',
+    ),
+  },
+  // X-ray: a piece attacking through another, drawn as a dashed cross.
+  xrays: {
+    color: "#3b82f6",
+    html: badgeIcon(
+      "#3b82f6",
+      '<line x1="60" y1="16" x2="84" y2="40" stroke="#fff" stroke-width="3" stroke-dasharray="4,3.5" stroke-linecap="round"/><line x1="84" y1="16" x2="60" y2="40" stroke="#fff" stroke-width="3" stroke-dasharray="4,3.5" stroke-linecap="round"/>',
+    ),
+  },
+  // Battery: two stacked bars -- rook/queen lined up behind each other.
+  batteries: {
+    color: "#22c55e",
+    html: badgeIcon(
+      "#22c55e",
+      '<rect x="62" y="17" width="20" height="7" rx="2" fill="#fff"/><rect x="62" y="28" width="20" height="7" rx="2" fill="#fff"/>',
+    ),
+  },
+  // Relative pin: same needle-through-ring as an absolute pin, but the ring is dashed
+  // (the piece CAN legally move, it's just costly to -- distinguishing it visually).
+  relative_pins: {
+    color: "#3b82f6",
+    html: badgeIcon(
+      "#3b82f6",
+      '<circle cx="72" cy="28" r="7" fill="none" stroke="#fff" stroke-width="3" stroke-dasharray="3,3"/><line x1="72" y1="9" x2="72" y2="19" stroke="#fff" stroke-width="3" stroke-linecap="round"/><line x1="72" y1="37" x2="72" y2="47" stroke="#fff" stroke-width="3" stroke-linecap="round"/>',
+    ),
+  },
+  // Trapped: a piece boxed in by a cage/grid.
+  trapped: {
+    color: "#ef4444",
+    html: badgeIcon(
+      "#ef4444",
+      '<rect x="61" y="17" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.6"/><line x1="61" y1="28" x2="83" y2="28" stroke="#fff" stroke-width="2"/><line x1="72" y1="17" x2="72" y2="39" stroke="#fff" stroke-width="2"/>',
+    ),
+  },
+  // Overloaded: an exclamation mark -- one defender doing too many jobs at once.
+  overloaded: {
+    color: "#ef4444",
+    html: badgeIcon(
+      "#ef4444",
+      '<line x1="72" y1="16" x2="72" y2="30" stroke="#fff" stroke-width="4" stroke-linecap="round"/><circle cx="72" cy="38" r="2.6" fill="#fff"/>',
+    ),
+  },
+};
+
+/** `boardShapesFor` plus a real pictogram badge naming which tactic type this is (see
+ * `TACTIC_ICONS`) -- shared by the persistent per-candidate view and the position-
+ * level hover preview, so both actually look like the same visual language rather than
+ * one having icons and the other not. */
+function tacticShapesWithSymbol(key: string, entry: { arrows: BoardArrow[]; highlights: BoardHighlight[] }): DrawShape[] {
+  const shapes: DrawShape[] = boardShapesFor(entry);
+  const icon = TACTIC_ICONS[key];
+  const firstSquare = entry.highlights[0]?.square ?? entry.arrows[0]?.to_square;
+  if (icon && firstSquare) {
+    shapes.push({ orig: firstSquare as Key, customSvg: { html: icon.html, center: "orig" } });
+  }
+  return shapes;
+}
+
+/** Flattens a candidate's own per-tactic-type arrows/highlights (pins/forks/skewers/...
+ * in the position right after playing it) into board shapes, merged into the default
+ * persistent view alongside the plain move arrow -- so the recommended move's own
+ * tactics (a fork it creates, a pin it keeps) show with their real board_viz color, AND
+ * a real pictogram badge naming which tactic it is, not just an unlabeled colored arrow
+ * a person has to already know the color convention to read. */
+function candidateTacticsShapes(tactics: CandidateReportData["candidate_tactics"]) {
+  if (!tactics) return [];
+  return Object.entries(tactics).flatMap(([key, entry]) => tacticShapesWithSymbol(key, entry));
+}
+
+/** A list of `NewFact`s -- text, a relative-importance bar from each fact's own real
+ * `weight_cp` (not a fabricated number; see `NewFact`'s own docstring), and, for facts
+ * that carry one, a hover preview of the square(s) that prove it. Shared by a
+ * candidate's own `new_facts` and a threat's own `facts` -- same shape, same reasoning,
+ * same rendering, rather than two ad-hoc lists that happen to look similar. */
+function FactList({
+  facts,
+  defaultShapes,
+}: {
+  facts: NewFact[];
+  defaultShapes: ReturnType<typeof boardShapesFor>;
+}) {
+  const setPreviewShapes = useSetAtom(previewShapesAtom);
+  if (facts.length === 0) return null;
+  const maxWeight = Math.max(...facts.map((f) => f.weight_cp), 1);
+
+  return (
+    <Stack gap={4}>
+      {facts.map((f) => {
+        const hoverable = f.arrows.length > 0 || f.highlights.length > 0;
+        return (
+          <Group
+            key={f.text}
+            gap="xs"
+            wrap="nowrap"
+            style={{ cursor: hoverable ? "pointer" : undefined }}
+            onMouseEnter={() => hoverable && setPreviewShapes(boardShapesFor(f))}
+            onMouseLeave={() => setPreviewShapes(defaultShapes)}
+          >
+            <Text size="sm" flex={1}>
+              • {f.text}
+            </Text>
+            {f.weight_cp > 0 && (
+              <Progress value={(f.weight_cp / maxWeight) * 100} color="teal" size="sm" w={50} />
+            )}
+          </Group>
+        );
+      })}
+    </Stack>
+  );
+}
+
 /** Position-level tactical motifs (pins, forks, skewers -- see board_viz.py) -- apply to
- * the current position regardless of which candidate is shown, so they render once,
- * above the verdict. Hovering previews the arrows/highlights; nothing renders if
- * there's nothing to show (no fabricated "0 pins" badge). */
-function TacticsBadges({ tactics }: { tactics: RichReport["tactics"] }) {
+ * the current position regardless of which candidate is shown. Hovering previews the
+ * arrows/highlights (restoring the persistent top-candidate shapes on mouse-leave, not
+ * clearing the board to nothing); nothing renders if there's nothing to show (no
+ * fabricated "0 pins" badge). */
+function TacticsBadges({
+  tactics,
+  defaultShapes,
+}: {
+  tactics: RichReport["tactics"];
+  defaultShapes: ReturnType<typeof boardShapesFor>;
+}) {
   const { t } = useTranslation();
   const setPreviewShapes = useSetAtom(previewShapesAtom);
   if (!tactics) return null;
@@ -239,7 +437,7 @@ function TacticsBadges({ tactics }: { tactics: RichReport["tactics"] }) {
     { key: "trapped", label: t("features.board.analysis.explanation.trapped"), data: tactics.trapped },
     { key: "overloaded", label: t("features.board.analysis.explanation.overloaded"), data: tactics.overloaded },
     // `data` is optional on every key beyond pins/forks/skewers -- an older cached
-    // report or `[%creport]` tag genuinely may not have them (see richReport.ts).
+    // live report or `[%creport]` tag genuinely may not have them (see richReport.ts).
   ].filter((i): i is typeof i & { data: NonNullable<typeof i.data> } => (i.data?.highlights.length ?? 0) > 0);
   if (items.length === 0) return null;
 
@@ -251,8 +449,8 @@ function TacticsBadges({ tactics }: { tactics: RichReport["tactics"] }) {
           variant="light"
           color="grape"
           style={{ cursor: "pointer" }}
-          onMouseEnter={() => setPreviewShapes(boardShapesFor(i.data))}
-          onMouseLeave={() => setPreviewShapes([])}
+          onMouseEnter={() => setPreviewShapes(tacticShapesWithSymbol(i.key, i.data))}
+          onMouseLeave={() => setPreviewShapes(defaultShapes)}
         >
           {i.label} ({i.data.highlights.length})
         </Badge>
@@ -261,9 +459,6 @@ function TacticsBadges({ tactics }: { tactics: RichReport["tactics"] }) {
   );
 }
 
-/** The best move's own reasoning: verdict prose (rendered by the caller, via the
- * verdict card), structural facts, and weighted term-diff bars. NNUE feature badges
- * stay reachable (click opens the real heatmap in FeatureModal) but aren't the focus. */
 /** The deep, causal, per-move sentences -- desperado/removed-defender/perpetual-
  * check/windmill/threat-response are already full sentences from the Python side
  * (deliberately not fabricated here); check_kind is the one bare enum value needing a
@@ -278,6 +473,9 @@ function DeepReasons({ candidate }: { candidate: CandidateReportData }) {
     candidate.removed_defender,
     candidate.perpetual_check,
     candidate.windmill,
+    candidate.underpromotion,
+    candidate.greek_gift,
+    candidate.zwischenzug,
   ].filter((l): l is string => Boolean(l));
   if (lines.length === 0) return null;
   return (
@@ -293,8 +491,17 @@ function DeepReasons({ candidate }: { candidate: CandidateReportData }) {
 
 /** The "major threats" list -- the opponent's alternative replies to this candidate,
  * each with its own score and reasons (chess.com's Game Review shows the opponent's
- * alternatives this way). Hovering previews the reply on the board. */
-function MajorThreats({ candidate, fen }: { candidate: CandidateReportData; fen: string }) {
+ * alternatives this way). Hovering previews the reply on the board, restoring the
+ * persistent default shapes on mouse-leave. */
+function MajorThreats({
+  candidate,
+  fen,
+  defaultShapes,
+}: {
+  candidate: CandidateReportData;
+  fen: string;
+  defaultShapes: ReturnType<typeof boardShapesFor>;
+}) {
   const { t } = useTranslation();
   const setPreviewFen = useSetAtom(previewFenAtom);
   const setPreviewShapes = useSetAtom(previewShapesAtom);
@@ -320,11 +527,11 @@ function MajorThreats({ candidate, fen }: { candidate: CandidateReportData; fen:
             // rather than real computed tactics data.
             const preview = previewFromSan(fen, [candidate.move_san, threat.move_san]);
             setPreviewFen(preview?.fen ?? null);
-            setPreviewShapes(preview?.lastMove ? [{ ...preview.lastMove, brush: "yellow" }] : []);
+            setPreviewShapes(preview?.lastMove ? [{ ...preview.lastMove, brush: "yellow" }] : defaultShapes);
           }}
           onMouseLeave={() => {
             setPreviewFen(null);
-            setPreviewShapes([]);
+            setPreviewShapes(defaultShapes);
           }}
         >
           <Group gap={6} wrap="nowrap" align="flex-start">
@@ -340,10 +547,14 @@ function MajorThreats({ candidate, fen }: { candidate: CandidateReportData; fen:
                   {formatCandidateScore(threat)}
                 </Text>
               </Group>
-              {threat.structural_far.length > 0 && (
-                <Text size="xs" c="dimmed">
-                  {threat.structural_far.join("; ")}
-                </Text>
+              {threat.facts.length > 0 ? (
+                <FactList facts={threat.facts} defaultShapes={defaultShapes} />
+              ) : (
+                threat.structural_far.length > 0 && (
+                  <Text size="xs" c="dimmed">
+                    {threat.structural_far.join("; ")}
+                  </Text>
+                )
               )}
             </div>
           </Group>
@@ -353,23 +564,28 @@ function MajorThreats({ candidate, fen }: { candidate: CandidateReportData; fen:
   );
 }
 
-/** Position-level facts -- not tied to any one candidate: the biggest threat right now
- * (before any candidate is chosen), zugzwang, and plain board facts (pay-attention
- * threats/defenders, advanced pawns, doubled 7th-rank rooks, weak back rank,
- * opposition). Renders nothing when the live report simply didn't run these (an older
- * `[%creport]` tag, or `--no-zugzwang`/`--no-threat-analysis`). */
-function BoardFacts({ richReport }: { richReport: RichReport }) {
-  const { t } = useTranslation();
-  const facts = [...(richReport.pay_attention ?? []), ...(richReport.positional_facts ?? [])];
-  const warnings = [
-    richReport.biggest_threat &&
-      t("features.board.analysis.explanation.biggestThreat", {
-        move: richReport.biggest_threat.move_san,
-        score: formatCandidateScore(richReport.biggest_threat),
-      }),
-    richReport.zugzwang,
-  ].filter((w): w is string => Boolean(w));
-  if (warnings.length === 0 && facts.length === 0) return null;
+/** Position-level facts -- not tied to any one candidate: zugzwang and plain board facts
+ * (pay-attention threats/defenders, advanced pawns, doubled 7th-rank rooks, weak back
+ * rank, opposition). The single biggest threat right now lives in the Threats tab
+ * instead (`ThreatsTab`), alongside the rest of what to be afraid of. Renders nothing
+ * when the live report simply didn't run these (an older `[%creport]` tag, or
+ * `--no-zugzwang`). */
+function BoardFacts({
+  richReport,
+  defaultShapes,
+}: {
+  richReport: RichReport;
+  defaultShapes: ReturnType<typeof boardShapesFor>;
+}) {
+  const setPreviewShapes = useSetAtom(previewShapesAtom);
+  // `pay_attention_detailed` (arrows/highlights per fact) is the newer field -- fall
+  // back to the plain-text `pay_attention` (no hover preview) for an older cached
+  // report generated before it existed.
+  const detailedFacts: { text: string; arrows: BoardArrow[]; highlights: BoardHighlight[] }[] =
+    richReport.pay_attention_detailed ?? (richReport.pay_attention ?? []).map((text) => ({ text, arrows: [], highlights: [] }));
+  const positionalFacts = richReport.positional_facts ?? [];
+  const warnings = [richReport.zugzwang].filter((w): w is string => Boolean(w));
+  if (warnings.length === 0 && detailedFacts.length === 0 && positionalFacts.length === 0) return null;
 
   return (
     <Paper radius="md" p="xs" withBorder>
@@ -382,82 +598,434 @@ function BoardFacts({ richReport }: { richReport: RichReport }) {
             <Text size="sm">{warning}</Text>
           </Group>
         ))}
-        {facts.length > 0 && (
-          <>
-            <Text size="xs" c="dimmed" fw="bold" tt="uppercase">
-              {t("features.board.analysis.explanation.boardFacts")}
+        {detailedFacts.map((fact) => (
+          <Group
+            key={fact.text}
+            gap={6}
+            wrap="nowrap"
+            align="flex-start"
+            style={{ cursor: fact.arrows.length || fact.highlights.length ? "pointer" : undefined }}
+            onMouseEnter={() => {
+              if (fact.arrows.length || fact.highlights.length) setPreviewShapes(boardShapesFor(fact));
+            }}
+            onMouseLeave={() => setPreviewShapes(defaultShapes)}
+          >
+            <ThemeIcon size={18} radius="xl" color="gray" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
+              <IconInfoCircle size={12} />
+            </ThemeIcon>
+            <Text size="xs" c="dimmed">
+              {fact.text}
             </Text>
-            {facts.map((fact) => (
-              <Group key={fact} gap={6} wrap="nowrap" align="flex-start">
-                <ThemeIcon size={18} radius="xl" color="gray" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
-                  <IconInfoCircle size={12} />
-                </ThemeIcon>
-                <Text size="xs" c="dimmed">
-                  {fact}
-                </Text>
-              </Group>
-            ))}
-          </>
-        )}
+          </Group>
+        ))}
+        {positionalFacts.map((fact) => (
+          <Group key={fact} gap={6} wrap="nowrap" align="flex-start">
+            <ThemeIcon size={18} radius="xl" color="gray" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
+              <IconInfoCircle size={12} />
+            </ThemeIcon>
+            <Text size="xs" c="dimmed">
+              {fact}
+            </Text>
+          </Group>
+        ))}
       </Stack>
     </Paper>
   );
 }
 
-function CandidatePanel({
+/** The opponent's single best move with a free tempo right now, plus the top
+ * candidate's own "major threats" reply list -- everything to be afraid of, in one
+ * tab. Position-level tactics badges (pins/forks/x-rays/...) sit above both, since
+ * they're facts about the board, not about any one candidate. */
+function ThreatsTab({
+  richReport,
+  top,
+  fen,
+  defaultShapes,
+}: {
+  richReport: RichReport;
+  top: CandidateReportData;
+  fen: string;
+  defaultShapes: ReturnType<typeof boardShapesFor>;
+}) {
+  const { t } = useTranslation();
+  const hasTactics = richReport.tactics && Object.values(richReport.tactics).some((v) => (v?.highlights.length ?? 0) > 0);
+  // `threats` (plural) is the newer field -- several of the opponent's top replies, not
+  // just the worst one. Falls back to the older singular `biggest_threat` for a cached
+  // report generated before `threats` existed, so this tab still shows *something* for
+  // those rather than going blank.
+  const threats =
+    richReport.threats ??
+    (richReport.biggest_threat ? [{ ...richReport.biggest_threat, facts: [] as NewFact[] }] : []);
+  const refutationLines = top.threat_refutation_lines ?? [];
+  if (!hasTactics && threats.length === 0 && top.threats.length === 0) {
+    return (
+      <Text size="sm" c="dimmed" p="xs">
+        {t("features.board.analysis.explanation.noThreats", "Nothing threatening in this position.")}
+      </Text>
+    );
+  }
+  return (
+    <Stack gap="sm" mt="xs">
+      <TacticsBadges tactics={richReport.tactics} defaultShapes={defaultShapes} />
+      {threats.length > 0 && (
+        <Paper radius="md" p="xs" withBorder>
+          <Text size="xs" fw={700} tt="uppercase" c="dimmed" mb={4}>
+            {t("features.board.analysis.explanation.majorThreats")}
+          </Text>
+          <Stack gap={4}>
+            {threats.map((threat) => (
+              <Group key={threat.move_san} gap={6} wrap="nowrap" align="flex-start">
+                <ThemeIcon size={18} radius="xl" color="orange" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
+                  <IconEyeExclamation size={12} />
+                </ThemeIcon>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <Text size="sm">
+                    {threat.move_san} ({formatCandidateScore(threat)})
+                  </Text>
+                  <FactList facts={threat.facts} defaultShapes={defaultShapes} />
+                </div>
+              </Group>
+            ))}
+          </Stack>
+        </Paper>
+      )}
+      {refutationLines.length > 0 && (
+        <Stack gap={4}>
+          <Text size="xs" fw={700} tt="uppercase" c="teal">
+            {t("features.board.analysis.explanation.howMoveResponds", "How {{move}} responds", {
+              move: top.move_san,
+            })}
+          </Text>
+          {refutationLines.map((line) => (
+            <Text key={line} size="sm" c="teal">
+              {line}
+            </Text>
+          ))}
+        </Stack>
+      )}
+      <MajorThreats candidate={top} fen={fen} defaultShapes={defaultShapes} />
+    </Stack>
+  );
+}
+
+/** The best line played out (`pv_san`), the other candidates worth considering, and --
+ * when chess-repertoire streamed it -- the engine's own depth-by-depth search
+ * progression: the real, honest version of "what was the engine thinking at each
+ * point", not a fabricated plan. */
+function PlansTab({
+  top,
+  others,
+  fen,
+  depthSeries,
+  narrative,
+}: {
+  top: CandidateReportData;
+  others: CandidateReportData[];
+  fen: string;
+  depthSeries?: DepthSeriesEntry[];
+  narrative?: BestMoveNarrative;
+}) {
+  const { t } = useTranslation();
+  const setPreviewFen = useSetAtom(previewFenAtom);
+  const setPreviewShapes = useSetAtom(previewShapesAtom);
+  const [showProgression, setShowProgression] = useState(false);
+  const [showNarrative, setShowNarrative] = useState(true);
+  const display = useAtomValue(explanationDisplaySettingsAtom);
+
+  return (
+    <Stack gap="sm" mt="xs">
+      {top.pv_san.length > 1 && (
+        <Paper radius="md" p="xs" withBorder>
+          <Text size="xs" fw={700} tt="uppercase" c="dimmed" mb={4}>
+            {t("features.board.analysis.explanation.bestLine")}
+          </Text>
+          <Text size="sm">{top.pv_san.join(" ")}</Text>
+        </Paper>
+      )}
+      {others.length > 0 && (
+        <Stack gap={4}>
+          <Text size="xs" fw={700} tt="uppercase" c="dimmed">
+            {t("features.board.analysis.explanation.alsoConsidered", "Also considered")}
+          </Text>
+          <Group gap="xs" wrap="wrap">
+            {others.map((candidate) => (
+              <Badge
+                key={candidate.move_uci}
+                variant="light"
+                color="gray"
+                style={{ cursor: "pointer" }}
+                onMouseEnter={() => {
+                  const preview = previewFromSan(fen, [candidate.move_san]);
+                  setPreviewFen(preview?.fen ?? null);
+                  setPreviewShapes(boardShapesFor(candidate));
+                }}
+                onMouseLeave={() => {
+                  setPreviewFen(null);
+                  setPreviewShapes(boardShapesFor(top));
+                }}
+              >
+                {candidate.move_san} ({formatCandidateScore(candidate)})
+              </Badge>
+            ))}
+          </Group>
+        </Stack>
+      )}
+      {!narrative && (
+        <Text size="xs" c="dimmed" fs="italic">
+          {others.length === 0
+            ? t(
+                "features.board.analysis.explanation.noNarrativeNoAlternatives",
+                "No second candidate to contrast against -- nothing to walk through.",
+              )
+            : t(
+                "features.board.analysis.explanation.noNarrativeNoRealTrap",
+                "The other candidates don't have a real trap to contrast against -- this position doesn't need a guided walkthrough, any reasonable try is close in strength.",
+              )}
+        </Text>
+      )}
+      {narrative && (
+        <Stack gap={4}>
+          <Text
+            size="xs"
+            fw={700}
+            tt="uppercase"
+            c="dimmed"
+            style={{ cursor: "pointer" }}
+            onClick={() => setShowNarrative((v) => !v)}
+          >
+            {t("features.board.analysis.explanation.howToFindTheBestMove", "How to find the best move")}{" "}
+            {showNarrative ? "▾" : "▸"}
+          </Text>
+          {showNarrative && (
+            <Stack gap={6}>
+              <div>
+                <Text size="xs" fw={700} c="blue">
+                  {t("features.board.analysis.explanation.narrativeIdea", "Idea")}
+                </Text>
+                <Text size="sm">{narrative.idea}</Text>
+              </div>
+              <div>
+                <Text size="xs" fw={700} c="red">
+                  {t("features.board.analysis.explanation.narrativeProblem", "Problem")}
+                </Text>
+                <Text size="sm">{narrative.problem}</Text>
+              </div>
+              <div>
+                <Text size="xs" fw={700} c="green">
+                  {t("features.board.analysis.explanation.narrativeSolution", "Solution")}
+                </Text>
+                <Text size="sm">{narrative.solution}</Text>
+              </div>
+              <div>
+                <Text size="xs" fw={700} c="dimmed">
+                  {t("features.board.analysis.explanation.narrativeOutcome", "Outcome")}
+                </Text>
+                <Text size="sm">{narrative.outcome}</Text>
+              </div>
+            </Stack>
+          )}
+        </Stack>
+      )}
+      {display.showSearchProgression && depthSeries && depthSeries.length > 0 && (
+        <Stack gap={4}>
+          <Text
+            size="xs"
+            fw={700}
+            tt="uppercase"
+            c="dimmed"
+            style={{ cursor: "pointer" }}
+            onClick={() => setShowProgression((v) => !v)}
+          >
+            {t("features.board.analysis.explanation.searchProgression")} {showProgression ? "▾" : "▸"}
+          </Text>
+          {showProgression && (
+            <Stack gap={2}>
+              {depthSeries.map((entry) => (
+                <Group key={entry.depth} gap="xs" wrap="nowrap">
+                  <Text size="xs" c="dimmed" w={50}>
+                    depth {entry.depth}
+                  </Text>
+                  <Text size="xs" truncate>
+                    {entry.candidates
+                      .slice(0, 3)
+                      .map((c) => `${c.move_san} (${formatCandidateScore(c)})`)
+                      .join(", ")}
+                  </Text>
+                </Group>
+              ))}
+            </Stack>
+          )}
+        </Stack>
+      )}
+    </Stack>
+  );
+}
+
+/** The classical-term weighted bars, NNUE feature badges (filtered to labeled concepts
+ * by default -- an "UNLABELED" pill is chess-repertoire internals leaking through, not
+ * something a normal review needs), and the term glossary they draw from. */
+function ConceptsTab({
   candidate,
   glossary,
-  fen,
   onSelectFeature,
 }: {
   candidate: CandidateReportData;
   glossary?: Record<string, { display: string; text: string }>;
-  fen: string;
   onSelectFeature: (networkId: string, feature: InterpretabilityFeature) => void;
 }) {
+  const { t } = useTranslation();
+  const display = useAtomValue(explanationDisplaySettingsAtom);
+
+  const networks = candidate.network_internals
+    .map((net) => {
+      const seen = new Set<string>();
+      const filtered = display.showUnlabeledFeatures
+        ? net.top_features
+        : net.top_features.filter((f) => f.concept_display);
+      // Different raw SAE features (different `feature_id`s) routinely correlate with
+      // the exact same labeled concept (e.g. three separate neurons all landing on
+      // "king safety attackers avoided") -- a real property of the trained network, not
+      // a bug, but showing the same text three times in a row reads as broken/cluttered
+      // rather than as three independent pieces of evidence. Keep the first (typically
+      // highest-activation) feature per unique label.
+      const deduped = filtered.filter((f) => {
+        const key = f.concept_display ?? `#${f.feature_id}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+      return { ...net, top_features: deduped };
+    })
+    .filter((net) => net.top_features.length > 0);
+
+  const hasTermBars = Object.entries(candidate.term_diffs_far).some(([, v]) => Math.abs(v) >= 0.03);
+
+  if (!hasTermBars && (!display.showFeatureBadges || networks.length === 0)) {
+    return (
+      <Text size="sm" c="dimmed" p="xs">
+        {t("features.board.analysis.explanation.noConcepts", "No labeled concepts for this position yet.")}
+      </Text>
+    );
+  }
+
+  return (
+    <Stack gap="sm" mt="xs">
+      {hasTermBars && <TermBadges diffs={candidate.term_diffs_far} glossary={glossary} />}
+      {display.showFeatureBadges &&
+        networks.map((net) => (
+          <Group key={net.network_id} gap="xs">
+            {net.top_features.map((feature) => (
+              <Badge
+                key={feature.feature_id}
+                variant="outline"
+                size="xs"
+                color={feature.concept_display ? "blue" : "gray"}
+                style={{ cursor: "pointer" }}
+                onClick={() => onSelectFeature(net.network_id, feature)}
+              >
+                {feature.concept_display ?? t("features.board.analysis.explanation.unlabeled")}
+              </Badge>
+            ))}
+          </Group>
+        ))}
+    </Stack>
+  );
+}
+
+/** Just the persistent header bubble -- icon, move, quality badge, verdict prose, and
+ * its short structural-facts elaboration. Deliberately not the deep reasoning/term
+ * bars/threats too (those live in the tabs below, each behind its own display toggle);
+ * this always renders so there's always at least one thing to see at a glance. */
+function CandidatePanel({ candidate }: { candidate: CandidateReportData }) {
   const { t } = useTranslation();
   const opponentColor = candidate.mover_is_white ? t("chess.black") : t("chess.white");
 
   return (
     <ReviewBubble candidate={candidate} bewareOfLabel={opponentColor}>
-      <Stack gap="xs" mt={6}>
-        {candidate.pv_san.length > 1 && (
-          <Text size="xs" c="dimmed">
-            <Text span fw="bold" size="xs" c="dimmed">
-              {t("features.board.analysis.explanation.bestLine")}:{" "}
-            </Text>
-            {candidate.pv_san.join(" ")}
-          </Text>
-        )}
-        {candidate.structural_far.length > 0 && (
-          <Text size="sm" c="dimmed">
-            {candidate.structural_far.join("; ")}
-          </Text>
-        )}
-        <DeepReasons candidate={candidate} />
-        <TermBadges diffs={candidate.term_diffs_far} glossary={glossary} />
-        {candidate.network_internals.map(
-          (net) =>
-            net.top_features.length > 0 && (
-              <Group key={net.network_id} gap="xs">
-                {net.top_features.map((feature) => (
-                  <Badge
-                    key={feature.feature_id}
-                    variant="outline"
-                    size="xs"
-                    color={feature.concept_display ? "blue" : "gray"}
-                    style={{ cursor: "pointer" }}
-                    onClick={() => onSelectFeature(net.network_id, feature)}
-                  >
-                    {feature.concept_display ?? t("features.board.analysis.explanation.unlabeled")}
-                  </Badge>
-                ))}
-              </Group>
-            ),
-        )}
-        <MajorThreats candidate={candidate} fen={fen} />
-      </Stack>
+      {candidate.structural_far.length > 0 && (
+        <Text size="sm" c="dimmed" mt={4}>
+          {candidate.structural_far.join("; ")}
+        </Text>
+      )}
     </ReviewBubble>
+  );
+}
+
+/** The settings popover shared by both the panel header (display-only toggles, cheap --
+ * they just hide already-computed sections) and pointed at from the on-demand
+ * "Generate" flow (which also reads `explainGenerationSettingsAtom` for what to
+ * actually compute). Kept as plain checkboxes, not a modal -- these are flipped rarely,
+ * while browsing a game, so a heavyweight dialog would be the wrong weight for it. */
+function DisplaySettingsPopover() {
+  const { t } = useTranslation();
+  const [display, setDisplay] = useAtom(explanationDisplaySettingsAtom);
+
+  const toggle = (key: keyof typeof display) => setDisplay((d) => ({ ...d, [key]: !d[key] }));
+
+  return (
+    <Popover width={260} position="bottom-end" shadow="md" withArrow>
+      <Popover.Target>
+        <Tooltip label={t("features.sidebar.settings")}>
+          <ThemeIcon variant="subtle" color="gray" size="sm" style={{ cursor: "pointer" }}>
+            <IconSettings size={16} />
+          </ThemeIcon>
+        </Tooltip>
+      </Popover.Target>
+      <Popover.Dropdown>
+        <Stack gap={6}>
+          <Text size="xs" fw={700} tt="uppercase" c="dimmed">
+            {t("features.board.analysis.explanation.tabTitle")}
+          </Text>
+          <Checkbox
+            size="xs"
+            label={t("features.board.analysis.explanation.boardFacts")}
+            checked={display.showBoardFacts}
+            onChange={() => toggle("showBoardFacts")}
+          />
+          <Checkbox
+            size="xs"
+            label={t("features.board.analysis.explanation.majorThreats")}
+            checked={display.showMajorThreats}
+            onChange={() => toggle("showMajorThreats")}
+          />
+          <Checkbox
+            size="xs"
+            label={t("features.board.analysis.explanation.termBars", "Term importance bars")}
+            checked={display.showTermBars}
+            onChange={() => toggle("showTermBars")}
+          />
+          <Checkbox
+            size="xs"
+            label={t("features.board.analysis.explanation.deepReasons", "Tactical reasoning")}
+            checked={display.showDeepReasons}
+            onChange={() => toggle("showDeepReasons")}
+          />
+          <Checkbox
+            size="xs"
+            label={t("features.board.analysis.explanation.featureBadges", "Network concept badges")}
+            checked={display.showFeatureBadges}
+            onChange={() => toggle("showFeatureBadges")}
+          />
+          <Checkbox
+            size="xs"
+            label={t("features.board.analysis.explanation.debug")}
+            description={t(
+              "features.board.analysis.explanation.debugDesc",
+              "Show unlabeled network features too",
+            )}
+            checked={display.showUnlabeledFeatures}
+            onChange={() => toggle("showUnlabeledFeatures")}
+          />
+          <Checkbox
+            size="xs"
+            label={t("features.board.analysis.explanation.searchProgression")}
+            checked={display.showSearchProgression}
+            onChange={() => toggle("showSearchProgression")}
+          />
+        </Stack>
+      </Popover.Dropdown>
+    </Popover>
   );
 }
 
@@ -465,23 +1033,25 @@ function GenerateExplanationPrompt({ fen, playedMoveUci }: { fen: string; played
   const { t } = useTranslation();
   const [binaryPath, setBinaryPath] = useAtom(chessRepertoirePathAtom);
   const [, setLiveReport] = useAtom(liveExplanationFamily(fen));
+  const genSettings = useAtomValue(explainGenerationSettingsAtom);
   const [generating, setGenerating] = useState(false);
+  const [showPathInput, setShowPathInput] = useState(false);
 
   const generate = async () => {
     setGenerating(true);
     try {
       const raw = unwrap(
         await commands.explainPosition(binaryPath, fen, {
-          multipv: null,
-          depth: null,
-          classicalEval: null,
-          branchAlternatives: null,
-          interpretability: null,
-          depthSeries: false,
+          multipv: genSettings.multipv,
+          depth: genSettings.depth,
+          classicalEval: genSettings.classicalEval,
+          branchAlternatives: genSettings.branchAlternatives,
+          interpretability: genSettings.interpretability,
+          depthSeries: genSettings.depthSeries,
           playedMoveUci,
-          branchDepth: null,
-          branchMultipv: null,
-          featureTopK: null,
+          branchDepth: genSettings.branchDepth,
+          branchMultipv: genSettings.branchMultipv,
+          featureTopK: genSettings.featureTopK,
         }),
       );
       setLiveReport(JSON.parse(raw));
@@ -490,70 +1060,93 @@ function GenerateExplanationPrompt({ fen, playedMoveUci }: { fen: string; played
     }
   };
 
-  // Always auto-generates on navigating to a position with no cached explanation yet --
-  // no visible toggle for this; the whole point is a review that's just there, matching
-  // the chess.com-style flow this was modeled on rather than an exploratory tool with
-  // knobs to turn before every request.
-  const autoFired = useRef(false);
-  useEffect(() => {
-    if (binaryPath && !autoFired.current) {
-      autoFired.current = true;
-      generate();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [binaryPath, fen]);
-
+  // Purely manual now, no auto-fire on navigation -- a big always-visible card (let
+  // alone one that silently spawns a subprocess on every click-through of a game) was
+  // the wrong weight for "no report on this move yet". Just a small button; the
+  // per-move explanation is opt-in, one move at a time. The "generate for whole game"
+  // checkbox in ReportModal is the batch path for when someone wants every move done
+  // up front.
   if (!binaryPath) {
+    if (!showPathInput) {
+      return (
+        <Group justify="center" p="xs">
+          <Button
+            size="xs"
+            variant="subtle"
+            leftSection={<IconBulb size={14} />}
+            onClick={() => setShowPathInput(true)}
+          >
+            {t("features.board.analysis.explanation.generate")}
+          </Button>
+        </Group>
+      );
+    }
     return (
-      <Stack p="md" gap="xs">
-        <Text size="sm" c="dimmed">
-          {t("features.board.analysis.explanation.noRichReport")}
-        </Text>
+      <Stack p="xs" gap="xs">
         <TextInput
+          size="xs"
           label={t("features.board.analysis.explanation.binaryPathLabel")}
           placeholder="/path/to/chess-repertoire/.venv/bin/chess-repertoire"
           defaultValue={binaryPath}
           onBlur={(e) => setBinaryPath(e.currentTarget.value)}
+          autoFocus
         />
       </Stack>
     );
   }
 
   return (
-    <Stack p="md" gap="xs">
-      <Text size="sm" c="dimmed">
-        {generating ? t("features.board.analysis.explanation.generating") : t("features.board.analysis.explanation.noRichReport")}
-      </Text>
-      <Button loading={generating} onClick={generate}>
+    <Group justify="center" p="xs">
+      <Button
+        size="xs"
+        variant="subtle"
+        loading={generating}
+        leftSection={<IconBulb size={14} />}
+        onClick={generate}
+      >
         {t("features.board.analysis.explanation.generate")}
       </Button>
-    </Stack>
+    </Group>
   );
 }
 
-/** The lean, chess.com-style review: the best move's own reasoning (verdict prose
- * lives in the caller's VerdictCard; this renders structural facts, weighted term
- * bars, and NNUE feature badges for the top candidate), plus tactics badges and a
- * short "also considered" list for the alternatives -- not a full accordion of every
- * candidate with its own expandable detail. No debug/options/batch-generate chrome:
- * generation is always automatic and always uses chess-repertoire's own defaults. */
+/** The lean, chess.com-style review, organized DecodeChess-style into tabs: a
+ * persistent verdict bubble (icon + quality + summary prose) always on top -- the one
+ * thing worth seeing at a glance without clicking anything -- then Threats / Plans /
+ * Concepts tabs for everything else, each only as deep as the data actually goes. The
+ * top candidate's own arrows/highlights stay drawn on the board by default (not just on
+ * hover) so the position always shows *why*, matching chess-repertoire's own
+ * board_viz-driven screenshots; hovering a threat/tactic/alternative temporarily
+ * overrides them and restores this default on mouse-leave. */
 function Explanation() {
+  const { t } = useTranslation();
   const store = useContext(TreeStateContext)!;
   const currentNode = useStore(store, useShallow((s) => s.currentNode()));
   const setPreviewShapes = useSetAtom(previewShapesAtom);
   const setPreviewFen = useSetAtom(previewFenAtom);
+  const display = useAtomValue(explanationDisplaySettingsAtom);
 
   const [selected, setSelected] = useState<{ networkId: string; feature: InterpretabilityFeature } | null>(null);
 
-  // Navigating for real (via the notation tree, not this panel's own hover previews)
-  // must never leave a stale preview overriding the board.
-  useEffect(() => {
-    setPreviewShapes([]);
-    setPreviewFen(null);
-  }, [currentNode.fen, setPreviewShapes, setPreviewFen]);
-
   const liveReport = useAtomValue(liveExplanationFamily(currentNode.fen));
   const richReport: RichReport | null = currentNode.richReport ?? liveReport;
+  const top = richReport && richReport.candidates.length > 0 ? richReport.candidates[0] : null;
+  const defaultShapes = useMemo(
+    () => (top ? [...boardShapesFor(top), ...candidateTacticsShapes(top.candidate_tactics)] : []),
+    [top],
+  );
+
+  // Navigating for real (via the notation tree, not this panel's own hover previews)
+  // must never leave a stale hover preview overriding the board -- but the top
+  // candidate's own arrows/highlights ARE the default, persistent view for this
+  // position (chess.com/DecodeChess both always show the recommended line's arrows),
+  // not a transient hover state.
+  useEffect(() => {
+    setPreviewFen(null);
+    setPreviewShapes(defaultShapes);
+    return () => setPreviewShapes([]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentNode.fen, defaultShapes]);
 
   // "explain the best move and the one that was played" -- if there's exactly one
   // child (the line being explored), pass its move so it's guaranteed to be explained
@@ -561,50 +1154,56 @@ function Explanation() {
   const playedMoveUci =
     currentNode.children.length === 1 && currentNode.children[0].move ? makeUci(currentNode.children[0].move) : null;
 
-  if (!richReport || richReport.candidates.length === 0) {
+  if (!richReport || !top) {
     return <GenerateExplanationPrompt fen={currentNode.fen} playedMoveUci={playedMoveUci} />;
   }
 
-  const [top, ...others] = richReport.candidates;
+  const others = richReport.candidates.slice(1);
 
   return (
-    <Stack gap="sm">
+    <Stack gap="0.4rem">
       {richReport.warnings && richReport.warnings.length > 0 && (
         <Alert color="yellow" title="chess-repertoire reported an issue" py="xs">
           {richReport.warnings.join(" ")}
         </Alert>
       )}
-      <BoardFacts richReport={richReport} />
-      <TacticsBadges tactics={richReport.tactics} />
-      <CandidatePanel
-        candidate={top}
-        glossary={richReport.term_glossary}
-        fen={currentNode.fen}
-        onSelectFeature={(networkId, feature) => setSelected({ networkId, feature })}
-      />
-      {others.length > 0 && (
-        <Group gap="xs" wrap="wrap">
-          {others.map((candidate) => (
-            <Badge
-              key={candidate.move_uci}
-              variant="light"
-              color="gray"
-              style={{ cursor: "pointer" }}
-              onMouseEnter={() => {
-                const preview = previewFromSan(currentNode.fen, [candidate.move_san]);
-                setPreviewFen(preview?.fen ?? null);
-                setPreviewShapes(boardShapesFor(candidate));
-              }}
-              onMouseLeave={() => {
-                setPreviewFen(null);
-                setPreviewShapes([]);
-              }}
-            >
-              {candidate.move_san} ({formatCandidateScore(candidate)})
-            </Badge>
-          ))}
-        </Group>
+      <Group justify="flex-end">
+        <DisplaySettingsPopover />
+      </Group>
+      {display.showBoardFacts && <BoardFacts richReport={richReport} defaultShapes={defaultShapes} />}
+      <CandidatePanel candidate={top} />
+      {/* One consistent layout for everything below the verdict -- stacked, individually
+       * collapsible sections (the exact same `CollapsibleSection` the Accuracy chart and
+       * move-type summary already use), never a tab bar. A tab hides its content until
+       * clicked; a person scanning this panel for "is there anything about threats here"
+       * shouldn't have to click four different tabs to find out. */}
+      <CollapsibleSection title={t("features.board.analysis.explanation.tabSummary")}>
+        <Stack gap="xs">
+          {top.new_facts && <FactList facts={top.new_facts} defaultShapes={defaultShapes} />}
+          {display.showDeepReasons && <DeepReasons candidate={top} />}
+        </Stack>
+      </CollapsibleSection>
+      {display.showMajorThreats && (
+        <CollapsibleSection title={t("features.board.analysis.explanation.tabThreats")}>
+          <ThreatsTab richReport={richReport} top={top} fen={currentNode.fen} defaultShapes={defaultShapes} />
+        </CollapsibleSection>
       )}
+      <CollapsibleSection title={t("features.board.analysis.explanation.tabPlans")}>
+        <PlansTab
+          top={top}
+          others={others}
+          fen={currentNode.fen}
+          depthSeries={richReport.depth_series}
+          narrative={richReport.best_move_narrative}
+        />
+      </CollapsibleSection>
+      <CollapsibleSection title={t("features.board.analysis.explanation.tabConcepts")} defaultOpened={false}>
+        <ConceptsTab
+          candidate={top}
+          glossary={richReport.term_glossary}
+          onSelectFeature={(networkId, feature) => setSelected({ networkId, feature })}
+        />
+      </CollapsibleSection>
       <FeatureModal
         networkId={selected?.networkId ?? ""}
         feature={selected?.feature ?? null}

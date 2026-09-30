@@ -38,6 +38,18 @@ export interface BoardHighlight {
     color: string;
 }
 
+/** A single concrete "why" fact -- see `report.NewFact` on the Python side. `weight_cp`
+ * is a real centipawn value (the piece actually at stake), not a fabricated confidence
+ * score -- safe to use directly for a relative-importance bar, sorted strongest-first
+ * by the backend already. `arrows`/`highlights` are empty for facts with no single
+ * proving square (e.g. a non-capturing "threatens to play X" idea). */
+export interface NewFact {
+    text: string;
+    weight_cp: number;
+    arrows: BoardArrow[];
+    highlights: BoardHighlight[];
+}
+
 /**
  * A trimmed `BranchReportData` (`serialize_branch_data_compact` on the Python side) --
  * one of the opponent's alternative replies to a candidate, i.e. one entry in the
@@ -50,6 +62,11 @@ export interface BranchReportDataCompact {
     score_cp: number | null;
     score_mate: number | null;
     structural_far: string[];
+    /** The same weighted "why" reasoning a candidate's own `new_facts` carries, just for
+     * this opponent reply instead of the mover's move -- real material weight per fact,
+     * sorted strongest-first, with arrows/highlights. Prefer this over `structural_far`
+     * (generic material/king-safety template prose) when rendering why a threat matters. */
+    facts: NewFact[];
 }
 
 /**
@@ -114,6 +131,50 @@ export interface CandidateReportData {
      * opponent's alternatives this way. Empty when `branch_alternatives` was off for
      * this report, or the position after this candidate is already game-over. */
     threats: BranchReportDataCompact[];
+    /** Concrete, move-specific "why this is good" facts -- "threatens to play Bxd5"
+     * (the mover's own planned follow-up), "the white queen on a1 supports the white
+     * rook on d1" (a newly-created support/safety relationship), "escapes: the white
+     * queen on b2 was threatened" (a danger this move escapes). Deliberately NOT the
+     * same thing as `structural_far` (generic material/king-safety/pawn/mobility
+     * template prose) -- this is the concrete, square-specific kind of reason. Absent
+     * on an older cached report generated before this field existed. Each carries a
+     * real `weight_cp` and the arrows/highlights that prove it (see `NewFact`). */
+    new_facts?: NewFact[];
+    /** One line per opponent threat this candidate addresses -- the plural sibling of
+     * `threat_response` (e.g. "Qa1 eliminates the threat of Qf6 -- it's no longer
+     * possible" / "Qa1 reduces the threat of Qb6 (...)"), one entry per significant
+     * threat in `RichReport.threats`. Absent on an older cached report. */
+    threat_refutation_lines?: string[];
+    /** The mover's own tactical motifs (pins/forks/skewers/x-rays/batteries/relative
+     * pins/trapped pieces/overloaded defenders) in the position right after playing
+     * this candidate -- same shape as `RichReport.tactics`, but tied to this specific
+     * move rather than the current position. Absent on an older cached report. */
+    candidate_tactics?: Record<string, { arrows: BoardArrow[]; highlights: BoardHighlight[] }>;
+    /** Whether the mover gives up real material (far-term) by choosing this candidate --
+     * a plain "this is a sacrifice" tag, independent of `is_brilliant` (a sacrifice can
+     * be simply correct/forced without being a shallow-search-defying brilliancy). */
+    is_sacrifice?: boolean;
+    /** ""underpromotes to a knight/rook/bishop"" if this candidate is a non-queen
+     * promotion, else absent/`null`. */
+    underpromotion?: string | null;
+    /** A one-sentence note if this candidate is the classical Bxh7+/Bxh2+ "Greek Gift"
+     * sacrifice pattern, else absent/`null`. */
+    greek_gift?: string | null;
+    /** A one-sentence note if this candidate is a "zwischenzug" -- a forcing in-between
+     * move played instead of immediately addressing a piece the mover already has
+     * hanging -- else absent/`null`. */
+    zwischenzug?: string | null;
+}
+
+/** An Idea -> Problem -> Solution -> Outcome guided explanation contrasting the top
+ * candidate against the next-best ("naive") one -- see
+ * `report.compute_best_move_narrative` on the Python side. Each field is already a
+ * complete, ready-to-render sentence/paragraph. */
+export interface BestMoveNarrative {
+    idea: string;
+    problem: string;
+    solution: string;
+    outcome: string;
 }
 
 export interface DepthSeriesCandidate {
@@ -178,6 +239,11 @@ export interface RichReport {
      * defenders -- color-neutral (not mover-vs-opponent like `tactics`). Only ever
      * present on a live `explainPosition` result. */
     pay_attention?: string[];
+    /** The arrow/highlight-carrying sibling of `pay_attention` -- same facts, each
+     * paired with the concrete square(s) that prove it, so hovering a fact can show
+     * *where* on the board it's true instead of text alone. Absent on an older cached
+     * report generated before this field existed -- fall back to `pay_attention`. */
+    pay_attention_detailed?: { text: string; arrows: BoardArrow[]; highlights: BoardHighlight[] }[];
     /** Plain positional facts from the target motif list: advanced pawns, doubled
      * rooks on the 7th/2nd rank, weak back rank, king opposition. Only ever present on
      * a live `explainPosition` result. */
@@ -193,6 +259,27 @@ export interface RichReport {
      * candidate's own `threat_response` explains what it does about this. Absent if
      * `--threat-analysis` wasn't run (a PGN-imported report never has this). */
     biggest_threat?: { move_san: string; score_cp: number | null; score_mate: number | null } | null;
+    /** The plural sibling of `biggest_threat` -- several of the opponent's best replies
+     * if the mover could just pass, not only the single worst one (chess.com's Game
+     * Review-style "major threats" list). Each candidate's own `threat_refutation_lines`
+     * explains what it does about each of these. Absent if `--threat-analysis` wasn't
+     * run; empty when nothing clears the significance threshold. */
+    threats?: {
+        move_san: string;
+        score_cp: number | null;
+        score_mate: number | null;
+        /** Why this threat is actually dangerous -- "threatens the white queen on b2",
+         * "the black rook on d1 supports..." -- reuses the same diff-based reasoning as
+         * a candidate's own `new_facts`, just pointed at the opponent's move instead of
+         * the mover's. Empty when nothing concrete fired (not every threat has a tidy
+         * geometric "why"). */
+        facts: NewFact[];
+    }[];
+    /** An Idea/Problem/Solution/Outcome narrative contrasting the top candidate against
+     * the next-best one -- absent when there's nothing honest to contrast (fewer than
+     * two candidates, or the second-best one's own opponent reply doesn't swing the
+     * position enough to call it a real "problem"). See `BestMoveNarrative`. */
+    best_move_narrative?: BestMoveNarrative;
 }
 
 const CREPORT_PATTERN = /\[%creport ([A-Za-z0-9+/=]+)\]/;

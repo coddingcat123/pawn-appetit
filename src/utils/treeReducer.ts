@@ -37,6 +37,12 @@ export interface ReportState {
     progress: number;
     isCompleted: boolean;
     inProgress: boolean;
+    /** "Generate for whole game" batch progress (ReportModal's `runExplanationBatch`) --
+     * store-backed, not local component state, since the settings modal that starts the
+     * batch closes itself immediately (`toggleReportingMode()`) while the batch keeps
+     * running; a report-panel progress line needs to read this after the modal is gone.
+     * `null` when no batch is running. */
+    explainProgress: { done: number; total: number } | null;
 }
 
 export type ListNode = {
@@ -100,11 +106,29 @@ export function findFeatureExamples(
  * its alternatives -- this just finds which one that was. A live `explainPosition`
  * result has the opposite direction (options *from* this position, not leading *to*
  * it), so this deliberately returns null for a node whose richReport only came from
- * `liveExplanationFamily`, rather than matching the wrong thing by accident. */
+ * `liveExplanationFamily`, rather than matching the wrong thing by accident.
+ *
+ * The live per-move "Generate" flow (`GenerateExplanationPrompt`) doesn't populate
+ * `node.richReport` at all -- it writes into `liveExplanationFamily`, keyed by the fen
+ * of whatever position the report was generated *from* (i.e. the parent's fen, when
+ * generated with `playedMoveUci` set to the move that led to `node` -- see
+ * `GenerateExplanationPrompt`'s own `playedMoveUci` handling). Same direction as a
+ * `[%creport]` tag (candidates *from* the parent, one of which is the move actually
+ * played), so the exact same lookup applies -- callers that also want to cover the live
+ * path pass that parent report in here directly, via `findPlayedCandidate`, rather than
+ * this function reaching into a jotai atom itself (keeping this a plain, atom-free
+ * utility). */
+export function findPlayedCandidate(
+    report: RichReport | null | undefined,
+    move: Move | null | undefined,
+): CandidateReportData | null {
+    if (!report || !move) return null;
+    const uci = makeUci(move);
+    return report.candidates.find((c) => c.move_uci === uci) ?? null;
+}
+
 export function playedMoveCandidate(node: TreeNode): CandidateReportData | null {
-    if (!node.richReport || !node.move) return null;
-    const uci = makeUci(node.move);
-    return node.richReport.candidates.find((c) => c.move_uci === uci) ?? null;
+    return findPlayedCandidate(node.richReport, node.move);
 }
 
 export function findFen(fen: string, node: TreeNode): number[] {
@@ -169,6 +193,7 @@ export function defaultTree(fen?: string): TreeState {
             progress: 0,
             isCompleted: false,
             inProgress: false,
+            explainProgress: null,
         },
     };
 }
