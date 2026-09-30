@@ -126,10 +126,17 @@ export interface CandidateReportData {
      * explanation from the original design -- else `null`. See `RichReport.biggest_threat`
      * for what the threat itself was. */
     threat_response: string | null;
-    /** The "major threats" list: the opponent's alternative replies to this candidate,
-     * each with its own score and reasons -- chess.com's Game Review shows the
-     * opponent's alternatives this way. Empty when `branch_alternatives` was off for
-     * this report, or the position after this candidate is already game-over. */
+    /** "Opponent's other tries": the engine's own alternative replies to this specific
+     * candidate, each with its own score and reasons -- chess.com's Game Review shows
+     * the opponent's alternatives this way. NOT the same thing as `RichReport.threats`
+     * (position-level, gated by a real significance threshold, the free-tempo-style
+     * "beware of X" danger list) -- this is just ordinary variety in what Black might
+     * try next, so the UI labels and icons the two differently rather than both calling
+     * themselves "Major threats" (a real confusion this project hit: this list's own
+     * top entry can be the exact same move the candidate's own best-line PV already
+     * predicts, which reads as nonsensical under a "threat" label). Empty when
+     * `branch_alternatives` was off for this report, or the position after this
+     * candidate is already game-over. */
     threats: BranchReportDataCompact[];
     /** Concrete, move-specific "why this is good" facts -- "threatens to play Bxd5"
      * (the mover's own planned follow-up), "the white queen on a1 supports the white

@@ -788,6 +788,7 @@
           "checkKind": "{{kind}} check",
           "boardFacts": "Board facts",
           "majorThreats": "Major threats",
+          "opponentAlternatives": "Opponent's other tries",
           "biggestThreat": "Biggest threat: {{move}} ({{score}})",
           "tabSummary": "Summary",
           "tabThreats": "Threats",

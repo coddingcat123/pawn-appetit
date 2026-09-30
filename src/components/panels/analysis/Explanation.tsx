@@ -489,10 +489,21 @@ function DeepReasons({ candidate }: { candidate: CandidateReportData }) {
   );
 }
 
-/** The "major threats" list -- the opponent's alternative replies to this candidate,
- * each with its own score and reasons (chess.com's Game Review shows the opponent's
- * alternatives this way). Hovering previews the reply on the board, restoring the
- * persistent default shapes on mouse-leave. */
+/** The opponent's alternative replies to this SPECIFIC candidate, each with its own
+ * score and reasons (chess.com's Game Review shows the opponent's alternatives this
+ * way) -- these are the engine's own next-best lines after the candidate is played,
+ * not "threats" in the free-tempo sense. Deliberately labeled and iconed differently
+ * from the position-level "Major threats" block above (`richReport.threats`, via
+ * `compute_top_threats`): that one answers "what's genuinely dangerous right now if
+ * White does nothing", gated by a real significance threshold -- this one is just
+ * "what else Black might reasonably try here", which is ordinary, expected variety,
+ * not something to be alarmed by. The two were previously both labeled "Major
+ * threats" with the same red/warning styling, which made an entirely normal reply
+ * (sometimes literally the very same move the candidate's own best-line PV predicts)
+ * read as a danger -- confirmed via a real side-by-side comparison against a position
+ * where this list's top entry was the PV's own expected continuation. Hovering
+ * previews the reply on the board, restoring the persistent default shapes on
+ * mouse-leave. */
 function MajorThreats({
   candidate,
   fen,
@@ -502,16 +513,12 @@ function MajorThreats({
   fen: string;
   defaultShapes: ReturnType<typeof boardShapesFor>;
 }) {
-  const { t } = useTranslation();
   const setPreviewFen = useSetAtom(previewFenAtom);
   const setPreviewShapes = useSetAtom(previewShapesAtom);
   if (candidate.threats.length === 0) return null;
 
   return (
-    <Stack gap={4} mt={4}>
-      <Text size="xs" fw={700} tt="uppercase" c="dimmed">
-        {t("features.board.analysis.explanation.majorThreats")}
-      </Text>
+    <Stack gap={4}>
       {candidate.threats.map((threat) => (
         <Paper
           key={threat.move_uci}
@@ -535,8 +542,8 @@ function MajorThreats({
           }}
         >
           <Group gap={6} wrap="nowrap" align="flex-start">
-            <ThemeIcon size={18} radius="xl" color="red" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
-              <IconEyeExclamation size={12} />
+            <ThemeIcon size={18} radius="xl" color="gray" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
+              <IconInfoCircle size={12} />
             </ThemeIcon>
             <div style={{ minWidth: 0 }}>
               <Group gap="xs" wrap="nowrap">
@@ -577,6 +584,7 @@ function BoardFacts({
   richReport: RichReport;
   defaultShapes: ReturnType<typeof boardShapesFor>;
 }) {
+  const { t } = useTranslation();
   const setPreviewShapes = useSetAtom(previewShapesAtom);
   // `pay_attention_detailed` (arrows/highlights per fact) is the newer field -- fall
   // back to the plain-text `pay_attention` (no hover preview) for an older cached
@@ -585,51 +593,59 @@ function BoardFacts({
     richReport.pay_attention_detailed ?? (richReport.pay_attention ?? []).map((text) => ({ text, arrows: [], highlights: [] }));
   const positionalFacts = richReport.positional_facts ?? [];
   const warnings = [richReport.zugzwang].filter((w): w is string => Boolean(w));
-  if (warnings.length === 0 && detailedFacts.length === 0 && positionalFacts.length === 0) return null;
+  const hasFacts = detailedFacts.length > 0 || positionalFacts.length > 0;
+  if (warnings.length === 0 && !hasFacts) return null;
 
   return (
-    <Paper radius="md" p="xs" withBorder>
-      <Stack gap={6}>
-        {warnings.map((warning) => (
-          <Group key={warning} gap={6} wrap="nowrap" align="flex-start">
-            <ThemeIcon size={18} radius="xl" color="orange" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
-              <IconEyeExclamation size={12} />
-            </ThemeIcon>
-            <Text size="sm">{warning}</Text>
-          </Group>
-        ))}
-        {detailedFacts.map((fact) => (
-          <Group
-            key={fact.text}
-            gap={6}
-            wrap="nowrap"
-            align="flex-start"
-            style={{ cursor: fact.arrows.length || fact.highlights.length ? "pointer" : undefined }}
-            onMouseEnter={() => {
-              if (fact.arrows.length || fact.highlights.length) setPreviewShapes(boardShapesFor(fact));
-            }}
-            onMouseLeave={() => setPreviewShapes(defaultShapes)}
-          >
-            <ThemeIcon size={18} radius="xl" color="gray" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
-              <IconInfoCircle size={12} />
-            </ThemeIcon>
-            <Text size="xs" c="dimmed">
-              {fact.text}
-            </Text>
-          </Group>
-        ))}
-        {positionalFacts.map((fact) => (
-          <Group key={fact} gap={6} wrap="nowrap" align="flex-start">
-            <ThemeIcon size={18} radius="xl" color="gray" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
-              <IconInfoCircle size={12} />
-            </ThemeIcon>
-            <Text size="xs" c="dimmed">
-              {fact}
-            </Text>
-          </Group>
-        ))}
-      </Stack>
-    </Paper>
+    <Stack gap={6}>
+      {warnings.map((warning) => (
+        <Group key={warning} gap={6} wrap="nowrap" align="flex-start">
+          <ThemeIcon size={18} radius="xl" color="orange" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
+            <IconEyeExclamation size={12} />
+          </ThemeIcon>
+          <Text size="sm">{warning}</Text>
+        </Group>
+      ))}
+      {/* Collapsed by default: this list mirrors DecodeChess's own "pay attention to"
+       * section, which it treats as bottom-of-page supplementary detail, not something
+       * that needs to compete with the verdict for the first screenful. */}
+      {hasFacts && (
+        <CollapsibleSection title={t("features.board.analysis.explanation.boardFacts")} defaultOpened={false}>
+          <Stack gap={6}>
+            {detailedFacts.map((fact) => (
+              <Group
+                key={fact.text}
+                gap={6}
+                wrap="nowrap"
+                align="flex-start"
+                style={{ cursor: fact.arrows.length || fact.highlights.length ? "pointer" : undefined }}
+                onMouseEnter={() => {
+                  if (fact.arrows.length || fact.highlights.length) setPreviewShapes(boardShapesFor(fact));
+                }}
+                onMouseLeave={() => setPreviewShapes(defaultShapes)}
+              >
+                <ThemeIcon size={18} radius="xl" color="gray" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
+                  <IconInfoCircle size={12} />
+                </ThemeIcon>
+                <Text size="xs" c="dimmed">
+                  {fact.text}
+                </Text>
+              </Group>
+            ))}
+            {positionalFacts.map((fact) => (
+              <Group key={fact} gap={6} wrap="nowrap" align="flex-start">
+                <ThemeIcon size={18} radius="xl" color="gray" variant="light" style={{ flexShrink: 0, marginTop: 1 }}>
+                  <IconInfoCircle size={12} />
+                </ThemeIcon>
+                <Text size="xs" c="dimmed">
+                  {fact}
+                </Text>
+              </Group>
+            ))}
+          </Stack>
+        </CollapsibleSection>
+      )}
+    </Stack>
   );
 }
 
@@ -669,10 +685,7 @@ function ThreatsTab({
     <Stack gap="sm" mt="xs">
       <TacticsBadges tactics={richReport.tactics} defaultShapes={defaultShapes} />
       {threats.length > 0 && (
-        <Paper radius="md" p="xs" withBorder>
-          <Text size="xs" fw={700} tt="uppercase" c="dimmed" mb={4}>
-            {t("features.board.analysis.explanation.majorThreats")}
-          </Text>
+        <CollapsibleSection title={t("features.board.analysis.explanation.majorThreats")}>
           <Stack gap={4}>
             {threats.map((threat) => (
               <Group key={threat.move_san} gap={6} wrap="nowrap" align="flex-start">
@@ -688,23 +701,29 @@ function ThreatsTab({
               </Group>
             ))}
           </Stack>
-        </Paper>
+        </CollapsibleSection>
       )}
       {refutationLines.length > 0 && (
-        <Stack gap={4}>
-          <Text size="xs" fw={700} tt="uppercase" c="teal">
-            {t("features.board.analysis.explanation.howMoveResponds", "How {{move}} responds", {
-              move: top.move_san,
-            })}
-          </Text>
-          {refutationLines.map((line) => (
-            <Text key={line} size="sm" c="teal">
-              {line}
-            </Text>
-          ))}
-        </Stack>
+        <CollapsibleSection
+          title={t("features.board.analysis.explanation.howMoveResponds", "How {{move}} responds", {
+            move: top.move_san,
+          })}
+          withPaper={false}
+        >
+          <Stack gap={4}>
+            {refutationLines.map((line) => (
+              <Text key={line} size="sm" c="teal">
+                {line}
+              </Text>
+            ))}
+          </Stack>
+        </CollapsibleSection>
       )}
-      <MajorThreats candidate={top} fen={fen} defaultShapes={defaultShapes} />
+      {top.threats.length > 0 && (
+        <CollapsibleSection title={t("features.board.analysis.explanation.opponentAlternatives")} defaultOpened={false}>
+          <MajorThreats candidate={top} fen={fen} defaultShapes={defaultShapes} />
+        </CollapsibleSection>
+      )}
     </Stack>
   );
 }
@@ -729,8 +748,6 @@ function PlansTab({
   const { t } = useTranslation();
   const setPreviewFen = useSetAtom(previewFenAtom);
   const setPreviewShapes = useSetAtom(previewShapesAtom);
-  const [showProgression, setShowProgression] = useState(false);
-  const [showNarrative, setShowNarrative] = useState(true);
   const display = useAtomValue(explanationDisplaySettingsAtom);
 
   return (
@@ -785,78 +802,53 @@ function PlansTab({
         </Text>
       )}
       {narrative && (
-        <Stack gap={4}>
-          <Text
-            size="xs"
-            fw={700}
-            tt="uppercase"
-            c="dimmed"
-            style={{ cursor: "pointer" }}
-            onClick={() => setShowNarrative((v) => !v)}
-          >
-            {t("features.board.analysis.explanation.howToFindTheBestMove", "How to find the best move")}{" "}
-            {showNarrative ? "▾" : "▸"}
-          </Text>
-          {showNarrative && (
-            <Stack gap={6}>
-              <div>
-                <Text size="xs" fw={700} c="blue">
-                  {t("features.board.analysis.explanation.narrativeIdea", "Idea")}
-                </Text>
-                <Text size="sm">{narrative.idea}</Text>
-              </div>
-              <div>
-                <Text size="xs" fw={700} c="red">
-                  {t("features.board.analysis.explanation.narrativeProblem", "Problem")}
-                </Text>
-                <Text size="sm">{narrative.problem}</Text>
-              </div>
-              <div>
-                <Text size="xs" fw={700} c="green">
-                  {t("features.board.analysis.explanation.narrativeSolution", "Solution")}
-                </Text>
-                <Text size="sm">{narrative.solution}</Text>
-              </div>
-              <div>
-                <Text size="xs" fw={700} c="dimmed">
-                  {t("features.board.analysis.explanation.narrativeOutcome", "Outcome")}
-                </Text>
-                <Text size="sm">{narrative.outcome}</Text>
-              </div>
-            </Stack>
-          )}
-        </Stack>
+        <CollapsibleSection title={t("features.board.analysis.explanation.howToFindTheBestMove", "How to find the best move")} withPaper={false}>
+          <Stack gap={6}>
+            <div>
+              <Text size="xs" fw={700} c="blue">
+                {t("features.board.analysis.explanation.narrativeIdea", "Idea")}
+              </Text>
+              <Text size="sm">{narrative.idea}</Text>
+            </div>
+            <div>
+              <Text size="xs" fw={700} c="red">
+                {t("features.board.analysis.explanation.narrativeProblem", "Problem")}
+              </Text>
+              <Text size="sm">{narrative.problem}</Text>
+            </div>
+            <div>
+              <Text size="xs" fw={700} c="green">
+                {t("features.board.analysis.explanation.narrativeSolution", "Solution")}
+              </Text>
+              <Text size="sm">{narrative.solution}</Text>
+            </div>
+            <div>
+              <Text size="xs" fw={700} c="dimmed">
+                {t("features.board.analysis.explanation.narrativeOutcome", "Outcome")}
+              </Text>
+              <Text size="sm">{narrative.outcome}</Text>
+            </div>
+          </Stack>
+        </CollapsibleSection>
       )}
       {display.showSearchProgression && depthSeries && depthSeries.length > 0 && (
-        <Stack gap={4}>
-          <Text
-            size="xs"
-            fw={700}
-            tt="uppercase"
-            c="dimmed"
-            style={{ cursor: "pointer" }}
-            onClick={() => setShowProgression((v) => !v)}
-          >
-            {t("features.board.analysis.explanation.searchProgression")} {showProgression ? "▾" : "▸"}
-          </Text>
-          {showProgression && (
-            <Stack gap={2}>
-              {depthSeries.map((entry) => (
-                <Group key={entry.depth} gap="xs" wrap="nowrap">
-                  <Text size="xs" c="dimmed" w={50}>
-                    depth {entry.depth}
-                  </Text>
-                  <Text size="xs" truncate>
-                    {entry.candidates
-                      .slice(0, 3)
-                      .map((c) => `${c.move_san} (${formatCandidateScore(c)})`)
-                      .join(", ")}
-                  </Text>
-                </Group>
-              ))}
-            </Stack>
-          )}
-        </Stack>
+        <CollapsibleSection title={t("features.board.analysis.explanation.searchProgression")} defaultOpened={false} withPaper={false}>
+          <Stack gap={2}>
+            {depthSeries.map((entry) => (
+              <Group key={entry.depth} gap="xs" wrap="nowrap">
+                <Text size="xs" c="dimmed" w={50}>
+                  depth {entry.depth}
+                </Text>
+                <Text size="xs" truncate>
+                  {entry.candidates
+                    .slice(0, 3)
+                    .map((c) => `${c.move_san} (${formatCandidateScore(c)})`)
+                    .join(", ")}
+                </Text>
+              </Group>
+            ))}
+          </Stack>
+        </CollapsibleSection>
       )}
     </Stack>
   );
